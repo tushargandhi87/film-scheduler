@@ -890,7 +890,7 @@ class ScheduleOptimizer:
         # ADD DEBUG HERE:
         print(f"DEBUG: PARSED {len(self.constraints)} CONSTRAINTS")
         for c in self.constraints[:10]:  # Show first 10
-        print(f"  - {c.source.name}: {c.description}")
+            print(f"  - {c.source.name}: {c.description}")
 
         # Determine shooting period from constraints or use defaults
         self.calendar = self._determine_calendar()
