@@ -519,8 +519,15 @@ class Phase1GA:
         """Calculate fitness for temporal assignment"""
         score = 0.0
         
+        
+
         # 1. Hard constraint violations
         hard_violations = self._count_hard_violations(individual)
+        
+        # ADD DEBUG:
+        //hard_violations = self._count_hard_violations(individual)
+        print(f"DEBUG Phase1: Hard violations = {hard_violations}")
+
         if hard_violations > 0:
             score += INFINITY_PENALTY * hard_violations
         
@@ -880,12 +887,21 @@ class ScheduleOptimizer:
         self.parser = UniversalConstraintParser()
         self.constraints = self.parser.parse_all_constraints(self.constraints_raw)
         
+        # ADD DEBUG HERE:
+        print(f"DEBUG: PARSED {len(self.constraints)} CONSTRAINTS")
+        for c in self.constraints[:10]:  # Show first 10
+        print(f"  - {c.source.name}: {c.description}")
+
         # Determine shooting period from constraints or use defaults
         self.calendar = self._determine_calendar()
         
         # Detect conflicts
         self.conflict_detector = ConflictDetector(self.constraints, self.stripboard)
         self.conflicts = self.conflict_detector.detect_all_conflicts()
+
+         # ADD MORE DEBUG:
+        print(f"DEBUG: DETECTED {len(self.conflicts)} CONFLICTS")
+        print(f"DEBUG: CALENDAR HAS {len(self.calendar.shooting_days)} SHOOTING DAYS")
     
     def _determine_calendar(self) -> ShootingCalendar:
         """Determine shooting calendar from production parameters"""
