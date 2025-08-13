@@ -525,7 +525,7 @@ class Phase1GA:
         hard_violations = self._count_hard_violations(individual)
         
         # ADD DEBUG:
-        //hard_violations = self._count_hard_violations(individual)
+        # hard_violations = self._count_hard_violations(individual)
         print(f"DEBUG Phase1: Hard violations = {hard_violations}")
 
         if hard_violations > 0:
