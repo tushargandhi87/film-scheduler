@@ -1,7 +1,7 @@
 """
 Advanced Film Production Schedule Optimizer
 3-Phase Genetic Algorithm with Hierarchical Constraint Satisfaction
-Generic solution for any film production
+Updated to work with structured JSON from n8n workflow
 """
 
 import numpy as np
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from enum import Enum
 import hashlib
 
-app = FastAPI(title="Advanced Film Schedule Optimizer v2.0")
+app = FastAPI(title="Advanced Film Schedule Optimizer v3.0")
 
 # Enable CORS for n8n cloud
 app.add_middleware(
@@ -47,8 +47,8 @@ class ConstraintPriority(Enum):
 
 class ConstraintType(Enum):
     """Types of constraints"""
-    HARD = "hard"  # Must be satisfied
-    SOFT = "soft"  # Preferably satisfied
+    HARD = "hard"
+    SOFT = "soft"
 
 @dataclass
 class Constraint:
@@ -69,11 +69,11 @@ class Conflict:
     constraint_1: str
     constraint_2: str
     suggested_resolution: str
-    
+
 class ScheduleRequest(BaseModel):
-    """Request model for schedule optimization"""
+    """Updated request model for structured constraints from n8n"""
     stripboard: List[Dict[str, Any]]
-    constraints: Dict[str, str]  # All 9 constraint documents
+    constraints: Dict[str, Any]  # Structured constraints from n8n grouping
     ga_params: Optional[Dict[str, Any]] = {
         "phase1_population": 50,
         "phase1_generations": 200,
@@ -95,252 +95,347 @@ class ScheduleResponse(BaseModel):
     fitness_score: float
     processing_time_seconds: float
 
-class UniversalConstraintParser:
-    """Parses constraints from any film's documents without hardcoding"""
+class StructuredConstraintParser:
+    """Parses structured constraints from n8n AI agents"""
     
     def __init__(self):
-        self.patterns = {
-            # Date patterns
-            'date_range': r'(\w+\.?\s+\d+)\s*[-–]\s*(\w+\.?\s+\d+)',
-            'single_date': r'(\w+\.?\s+\d+(?:,?\s+\d{4})?)',
-            'unavailable': r'(?:unavailable|not available|cannot)\s*:?\s*([^.]+)',
-            'only_available': r'(?:only available|available only|confirmed for)\s*:?\s*([^.]+)',
-            'weekday_restriction': r'(weekends?|weekdays?|monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?\s+only',
-            
-            # Priority patterns
-            'must_patterns': r'(?:must|has to|needs to|required to|essential|mandatory)\s+(?:be\s+)?(?:shot|filmed|scheduled|completed)',
-            'first_priority': r'(?:shoot first|day 1|first day|opening scene|priority one|top priority)',
-            'last_priority': r'(?:shoot last|final day|closing scene|end of schedule)',
-            
-            # Actor patterns
-            'actor_name': r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\s*\(as\s+([^)]+)\)',
-            'minor_restriction': r'(?:minor|child|under 18|student)',
-            'working_hours': r'(\d+(?:\.\d+)?)\s*hours?\s+(?:max|maximum|limit)',
-            
-            # Location patterns
-            'address': r'\d+\s+[^,]+,\s*[^,]+,\s*[A-Z]{2}(?:\s+\d{5})?',
-            'location_name': r'(?:INT\.|EXT\.|INT/EXT\.)\s*([^-\n]+)',
-            
-            # Time patterns
-            'prep_time': r'(?:prep|preparation|setup)\s*(?:time)?:?\s*\+?(\d+(?:\.\d+)?)\s*hours?',
-            'wrap_time': r'(?:wrap|cleanup|strike)\s*(?:time)?:?\s*\+?(\d+(?:\.\d+)?)\s*hours?',
-            
-            # Equipment patterns
-            'equipment_rental': r'(\d+)[-\s]?day\s+rental',
-            'equipment_name': r'(?:camera|crane|dolly|steadicam|technocrane|lights?|grip)',
-        }
-        
-    def parse_all_constraints(self, constraints_dict: Dict[str, str]) -> List[Constraint]:
-        """Parse all constraint documents and return unified constraint list"""
+        pass
+    
+    def parse_all_constraints(self, constraints_dict: Dict[str, Any]) -> List[Constraint]:
+        """Parse all structured constraint groups from n8n"""
         all_constraints = []
         
-        # Parse each document according to its priority
-        for doc_type, text in constraints_dict.items():
-            if not text:
-                continue
-                
-            priority = self._get_priority(doc_type)
-            doc_constraints = self._parse_document(text, priority, doc_type)
-            all_constraints.extend(doc_constraints)
+        # Parse each constraint group
+        if 'people_constraints' in constraints_dict:
+            all_constraints.extend(self._parse_people_constraints(constraints_dict['people_constraints']))
+        
+        if 'location_constraints' in constraints_dict:
+            all_constraints.extend(self._parse_location_constraints(constraints_dict['location_constraints']))
+        
+        if 'technical_constraints' in constraints_dict:
+            all_constraints.extend(self._parse_technical_constraints(constraints_dict['technical_constraints']))
+        
+        if 'creative_constraints' in constraints_dict:
+            all_constraints.extend(self._parse_creative_constraints(constraints_dict['creative_constraints']))
+        
+        if 'operational_data' in constraints_dict:
+            all_constraints.extend(self._parse_operational_data(constraints_dict['operational_data']))
         
         return all_constraints
     
-    def _get_priority(self, doc_type: str) -> ConstraintPriority:
-        """Map document type to priority level"""
-        mapping = {
-            'director_notes': ConstraintPriority.DIRECTOR,
-            'dop_priorities': ConstraintPriority.DOP,
-            'prod_parameters': ConstraintPriority.PRODUCTION,
-            'special_prep': ConstraintPriority.PREP_WRAP,
-            'actor_availability': ConstraintPriority.ACTOR,
-            'scene_estimates': ConstraintPriority.TIME_ESTIMATE,
-            'location_availability': ConstraintPriority.LOCATION,
-            'equipment_availability': ConstraintPriority.EQUIPMENT,
-            'weather_data': ConstraintPriority.WEATHER
-        }
-        return mapping.get(doc_type, ConstraintPriority.WEATHER)
-    
-    def _parse_document(self, text: str, priority: ConstraintPriority, doc_type: str) -> List[Constraint]:
-        """Parse a single document into constraints"""
-        constraints = []
-        
-        if doc_type == 'director_notes':
-            constraints.extend(self._parse_director_notes(text, priority))
-        elif doc_type == 'actor_availability':
-            constraints.extend(self._parse_actor_availability(text, priority))
-        elif doc_type == 'location_availability':
-            constraints.extend(self._parse_location_availability(text, priority))
-        elif doc_type == 'equipment_availability':
-            constraints.extend(self._parse_equipment_availability(text, priority))
-        elif doc_type == 'special_prep':
-            constraints.extend(self._parse_prep_wrap(text, priority))
-        else:
-            # Generic parsing for other documents
-            constraints.extend(self._parse_generic(text, priority))
-        
-        return constraints
-    
-    def _parse_director_notes(self, text: str, priority: ConstraintPriority) -> List[Constraint]:
-        """Parse director's mandates and preferences"""
-        constraints = []
-        lines = text.split('\n')
-        
-        for line in lines:
-            # Check for must-shoot-first patterns
-            if re.search(self.patterns['must_patterns'], line, re.IGNORECASE):
-                scene_nums = re.findall(r'[Ss]cene\s+(\d+[a-z]?)', line)
-                if re.search(self.patterns['first_priority'], line, re.IGNORECASE):
-                    for scene in scene_nums:
-                        constraints.append(Constraint(
-                            source=priority,
-                            type=ConstraintType.HARD,
-                            description=f"Scene {scene} must be shot first (Director mandate)",
-                            affected_scenes=[scene],
-                            date_restriction={'day': 1}
-                        ))
-        
-        return constraints
-    
-    def _parse_actor_availability(self, text: str, priority: ConstraintPriority) -> List[Constraint]:
+    def _parse_people_constraints(self, people_data: Dict) -> List[Constraint]:
         """Parse actor availability constraints"""
         constraints = []
-        current_actor = None
         
-        for line in text.split('\n'):
-            # Find actor names
-            actor_match = re.search(self.patterns['actor_name'], line)
-            if actor_match:
-                current_actor = actor_match.group(1)
+        if 'actors' in people_data:
+            actors_data = people_data['actors']
             
-            if current_actor:
-                # Check unavailable dates
-                if 'unavailable' in line.lower():
-                    dates = re.findall(self.patterns['date_range'], line) or re.findall(self.patterns['single_date'], line)
-                    for date_info in dates:
-                        constraints.append(Constraint(
-                            source=priority,
-                            type=ConstraintType.HARD,
-                            description=f"{current_actor} unavailable: {date_info}",
-                            affected_scenes=[],  # Will be matched with stripboard later
-                            actor_restriction={'actor': current_actor, 'unavailable': date_info}
-                        ))
+            # Handle different possible structures
+            if 'actors' in actors_data:  # Nested structure
+                actors_info = actors_data['actors']
+            else:
+                actors_info = actors_data
+            
+            for actor_name, actor_info in actors_info.items():
+                constraint_level = actor_info.get('constraint_level', 'Hard')
+                constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
                 
-                # Check working hour restrictions
-                hours_match = re.search(self.patterns['working_hours'], line)
-                if hours_match:
-                    max_hours = float(hours_match.group(1))
-                    constraints.append(Constraint(
-                        source=priority,
-                        type=ConstraintType.HARD if 'minor' in line.lower() else ConstraintType.SOFT,
-                        description=f"{current_actor} max {max_hours} hours/day",
-                        affected_scenes=[],
-                        actor_restriction={'actor': current_actor, 'max_hours': max_hours}
-                    ))
-        
-        return constraints
-    
-    def _parse_location_availability(self, text: str, priority: ConstraintPriority) -> List[Constraint]:
-        """Parse location availability windows"""
-        constraints = []
-        current_location = None
-        
-        for line in text.split('\n'):
-            # Identify location
-            if '●' in line or 'Location:' in line:
-                loc_match = re.search(r'[●•]\s*([^(:]+)', line)
-                if loc_match:
-                    current_location = loc_match.group(1).strip()
-            
-            if current_location:
-                # Check for ONLY availability
-                if 'only' in line.lower():
-                    only_match = re.search(r'([^:]+):\s*(.+?)\s+ONLY', line, re.IGNORECASE)
-                    if only_match:
-                        date_info = only_match.group(2)
+                # Parse unavailable dates
+                if actor_info.get('dates'):
+                    for date_str in actor_info['dates']:
                         constraints.append(Constraint(
-                            source=priority,
-                            type=ConstraintType.HARD,
-                            description=f"{current_location} available {date_info} ONLY",
+                            source=ConstraintPriority.ACTOR,
+                            type=constraint_type,
+                            description=f"{actor_name} unavailable on {date_str}",
                             affected_scenes=[],
-                            location_restriction={'location': current_location, 'available_only': date_info}
+                            actor_restriction={
+                                'actor': actor_name, 
+                                'unavailable_date': date_str
+                            }
                         ))
                 
-                # Check for date ranges
-                range_matches = re.findall(self.patterns['date_range'], line)
-                for start, end in range_matches:
+                # Parse week restrictions
+                if actor_info.get('weeks'):
                     constraints.append(Constraint(
-                        source=priority,
-                        type=ConstraintType.HARD,
-                        description=f"{current_location}: {start} - {end}",
+                        source=ConstraintPriority.ACTOR,
+                        type=constraint_type,
+                        description=f"{actor_name} available weeks: {actor_info['weeks']}",
                         affected_scenes=[],
-                        location_restriction={'location': current_location, 'range': (start, end)}
-                    ))
-        
-        return constraints
-    
-    def _parse_equipment_availability(self, text: str, priority: ConstraintPriority) -> List[Constraint]:
-        """Parse equipment rental periods"""
-        constraints = []
-        
-        for line in text.split('\n'):
-            rental_match = re.search(self.patterns['equipment_rental'], line)
-            if rental_match:
-                days = int(rental_match.group(1))
-                equipment = re.search(self.patterns['equipment_name'], line, re.IGNORECASE)
-                if equipment:
-                    constraints.append(Constraint(
-                        source=priority,
-                        type=ConstraintType.SOFT,
-                        description=f"{equipment.group()} - {days} day rental",
-                        affected_scenes=[],
-                        location_restriction={'equipment': equipment.group(), 'rental_days': days}
-                    ))
-        
-        return constraints
-    
-    def _parse_prep_wrap(self, text: str, priority: ConstraintPriority) -> List[Constraint]:
-        """Parse special preparation and wrap times"""
-        constraints = []
-        current_scene = None
-        
-        for line in text.split('\n'):
-            # Find scene numbers
-            scene_match = re.search(r'[Ss]cene\s+(\d+[a-z]?)', line)
-            if scene_match:
-                current_scene = scene_match.group(1)
-            
-            if current_scene:
-                # Check prep time
-                prep_match = re.search(self.patterns['prep_time'], line)
-                if prep_match:
-                    hours = float(prep_match.group(1))
-                    constraints.append(Constraint(
-                        source=priority,
-                        type=ConstraintType.SOFT,
-                        description=f"Scene {current_scene} needs +{hours}h prep",
-                        affected_scenes=[current_scene],
-                        date_restriction={'prep_hours': hours}
+                        actor_restriction={
+                            'actor': actor_name, 
+                            'available_weeks': actor_info['weeks']
+                        }
                     ))
                 
-                # Check wrap time
-                wrap_match = re.search(self.patterns['wrap_time'], line)
-                if wrap_match:
-                    hours = float(wrap_match.group(1))
+                # Parse daily restrictions
+                if actor_info.get('days') is not None:
                     constraints.append(Constraint(
-                        source=priority,
-                        type=ConstraintType.SOFT,
-                        description=f"Scene {current_scene} needs +{hours}h wrap",
-                        affected_scenes=[current_scene],
-                        date_restriction={'wrap_hours': hours}
+                        source=ConstraintPriority.ACTOR,
+                        type=constraint_type,
+                        description=f"{actor_name} needs {actor_info['days']} days",
+                        affected_scenes=[],
+                        actor_restriction={
+                            'actor': actor_name, 
+                            'required_days': actor_info['days']
+                        }
                     ))
         
         return constraints
     
-    def _parse_generic(self, text: str, priority: ConstraintPriority) -> List[Constraint]:
-        """Generic parsing for other document types"""
+    def _parse_location_constraints(self, location_data: Dict) -> List[Constraint]:
+        """Parse location availability and travel time constraints"""
         constraints = []
-        # Basic pattern matching for any other constraints
+        
+        # Parse location availability
+        if 'locations' in location_data:
+            locations_info = location_data['locations']
+            
+            # Handle nested structure
+            if 'locations' in locations_info:
+                locations_dict = locations_info['locations']
+            else:
+                locations_dict = locations_info
+            
+            for location_name, location_info in locations_dict.items():
+                if 'constraints' in location_info:
+                    for constraint_info in location_info['constraints']:
+                        constraint_level = constraint_info.get('constraint_level', 'Hard')
+                        constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+                        
+                        constraints.append(Constraint(
+                            source=ConstraintPriority.LOCATION,
+                            type=constraint_type,
+                            description=f"{location_name}: {constraint_info.get('details', '')}",
+                            affected_scenes=[],
+                            location_restriction={
+                                'location': location_name,
+                                'category': constraint_info.get('category'),
+                                'details': constraint_info.get('details')
+                            }
+                        ))
+        
+        # Parse travel times
+        if 'travel_times' in location_data:
+            travel_data = location_data['travel_times']
+            if 'travel_times' in travel_data:  # Nested structure
+                travel_times = travel_data['travel_times']
+            else:
+                travel_times = travel_data
+            
+            # Handle new array structure
+            if isinstance(travel_times, list):
+                for travel_info in travel_times:
+                    route_key = f"{travel_info['from_location_fictional']}_to_{travel_info['to_location_fictional']}"
+                    constraints.append(Constraint(
+                        source=ConstraintPriority.LOCATION,
+                        type=ConstraintType.SOFT,
+                        description=f"Travel time {route_key}: {travel_info['estimated_travel_time_minutes']} minutes",
+                        affected_scenes=[],
+                        location_restriction={
+                            'from_location': travel_info['from_location_fictional'],
+                            'to_location': travel_info['to_location_fictional'],
+                            'travel_time_minutes': travel_info['estimated_travel_time_minutes'],
+                            'notes': travel_info.get('notes', '')
+                        }
+                    ))
+            else:
+                # Handle old dictionary structure (fallback)
+                for route, time_str in travel_times.items():
+                    constraints.append(Constraint(
+                        source=ConstraintPriority.LOCATION,
+                        type=ConstraintType.SOFT,
+                        description=f"Travel time {route}: {time_str}",
+                        affected_scenes=[],
+                        location_restriction={
+                            'route': route,
+                            'travel_time': time_str
+                        }
+                    ))
+        
         return constraints
+    
+    def _parse_technical_constraints(self, technical_data: Dict) -> List[Constraint]:
+        """Parse equipment and special requirements"""
+        constraints = []
+        
+        # Parse equipment constraints
+        if 'equipment' in technical_data:
+            equipment_data = technical_data['equipment']
+            
+            # Handle nested structure
+            if 'special_equipment' in equipment_data:
+                equipment_dict = equipment_data['special_equipment']
+            else:
+                equipment_dict = equipment_data
+            
+            for equipment_name, equipment_info in equipment_dict.items():
+                constraint_level = equipment_info.get('constraint_level', 'Hard')
+                constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+                
+                constraints.append(Constraint(
+                    source=ConstraintPriority.EQUIPMENT,
+                    type=constraint_type,
+                    description=f"{equipment_name}: {equipment_info.get('notes', '')}",
+                    affected_scenes=[],
+                    location_restriction={  # Using location_restriction for equipment
+                        'equipment': equipment_name,
+                        'rental_type': equipment_info.get('type'),
+                        'available_weeks': equipment_info.get('weeks', []),
+                        'available_dates': equipment_info.get('dates', []),
+                        'required_days': equipment_info.get('days')
+                    }
+                ))
+        
+        # Parse special scene requirements
+        if 'special_requirements' in technical_data:
+            special_data = technical_data['special_requirements']
+            
+            # Handle nested structure
+            if 'scene_requirements' in special_data:
+                scene_reqs = special_data['scene_requirements']
+            else:
+                scene_reqs = special_data
+            
+            for req_name, req_info in scene_reqs.items():
+                constraint_level = req_info.get('constraint_level', 'Hard')
+                constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+                
+                # Extract scene numbers from notes
+                notes = req_info.get('notes', '')
+                scene_numbers = self._extract_scene_numbers(notes)
+                
+                constraints.append(Constraint(
+                    source=ConstraintPriority.PREP_WRAP,
+                    type=constraint_type,
+                    description=f"{req_name}: {req_info.get('type')} - {notes}",
+                    affected_scenes=scene_numbers,
+                    date_restriction={
+                        'prep_days': req_info.get('days'),
+                        'department': req_info.get('type')
+                    }
+                ))
+        
+        return constraints
+    
+    def _parse_creative_constraints(self, creative_data: Dict) -> List[Constraint]:
+        """Parse director and DOP constraints"""
+        constraints = []
+        
+        # Parse director constraints
+        if 'director_notes' in creative_data:
+            director_data = creative_data['director_notes']
+            
+            # Handle nested structure
+            if 'director_constraints' in director_data:
+                director_constraints = director_data['director_constraints']
+            else:
+                director_constraints = director_data
+            
+            for constraint_info in director_constraints:
+                constraint_level = constraint_info.get('constraint_level', 'Hard')
+                constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+                
+                constraints.append(Constraint(
+                    source=ConstraintPriority.DIRECTOR,
+                    type=constraint_type,
+                    description=constraint_info.get('constraint_text', ''),
+                    affected_scenes=[str(s) for s in constraint_info.get('related_scenes', [])],
+                    date_restriction={
+                        'category': constraint_info.get('category'),
+                        'locations': constraint_info.get('related_locations', [])
+                    }
+                ))
+        
+        # Parse DOP constraints
+        if 'dop_priorities' in creative_data:
+            dop_data = creative_data['dop_priorities']
+            
+            # Handle nested structure
+            if 'dop_priorities' in dop_data:
+                dop_constraints = dop_data['dop_priorities']
+            else:
+                dop_constraints = dop_data
+            
+            for constraint_info in dop_constraints:
+                constraint_level = constraint_info.get('constraint_level', 'Hard')
+                constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+                
+                constraints.append(Constraint(
+                    source=ConstraintPriority.DOP,
+                    type=constraint_type,
+                    description=constraint_info.get('constraint_text', ''),
+                    affected_scenes=[str(s) for s in constraint_info.get('related_scenes', [])],
+                    location_restriction={
+                        'category': constraint_info.get('category'),
+                        'locations': constraint_info.get('related_locations', [])
+                    }
+                ))
+        
+        return constraints
+    
+    def _parse_operational_data(self, operational_data: Dict) -> List[Constraint]:
+        """Parse production rules and weather data"""
+        constraints = []
+        
+        # Parse production rules
+        if 'production_rules' in operational_data:
+            prod_data = operational_data['production_rules']
+            
+            # Handle nested structure
+            if 'rules' in prod_data:
+                production_rules = prod_data['rules']
+            else:
+                production_rules = prod_data
+            
+            for rule_info in production_rules:
+                constraint_level = rule_info.get('constraint_level', 'Hard')
+                constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+                
+                constraints.append(Constraint(
+                    source=ConstraintPriority.PRODUCTION,
+                    type=constraint_type,
+                    description=f"Production rule: {rule_info.get('raw_text', '')}",
+                    affected_scenes=[],
+                    date_restriction={
+                        'parameter': rule_info.get('parameter_name'),
+                        'rule_text': rule_info.get('raw_text')
+                    }
+                ))
+        
+        # Parse weather data
+        if 'weather' in operational_data:
+            weather_data = operational_data['weather']
+            
+            if 'weekly_forecasts' in weather_data:
+                for week_key, week_info in weather_data['weekly_forecasts'].items():
+                    constraints.append(Constraint(
+                        source=ConstraintPriority.WEATHER,
+                        type=ConstraintType.SOFT,
+                        description=f"{week_key}: {week_info.get('weather_outlook', '')}",
+                        affected_scenes=[],
+                        date_restriction={
+                            'week': week_key,
+                            'date_range': week_info.get('date_range'),
+                            'weather_outlook': week_info.get('weather_outlook')
+                        }
+                    ))
+        
+        return constraints
+    
+    def _extract_scene_numbers(self, text: str) -> List[str]:
+        """Extract scene numbers from text"""
+        if not text:
+            return []
+        
+        # Look for "Scenes: [1, 2, 3]" pattern
+        scene_match = re.search(r'Scenes:\s*\[([^\]]+)\]', text)
+        if scene_match:
+            scene_str = scene_match.group(1)
+            return [s.strip() for s in scene_str.split(',')]
+        
+        # Look for individual scene numbers
+        scene_numbers = re.findall(r'[Ss]cene\s+(\d+[a-z]?)', text)
+        return scene_numbers
 
 class ShootingCalendar:
     """Manages shooting dates and availability"""
@@ -519,13 +614,8 @@ class Phase1GA:
         """Calculate fitness for temporal assignment"""
         score = 0.0
         
-        
-
         # 1. Hard constraint violations
         hard_violations = self._count_hard_violations(individual)
-        
-        # ADD DEBUG:
-        # hard_violations = self._count_hard_violations(individual)
         print(f"DEBUG Phase1: Hard violations = {hard_violations}")
 
         if hard_violations > 0:
@@ -884,10 +974,9 @@ class ScheduleOptimizer:
         self.params = request.ga_params
         
         # Initialize components
-        self.parser = UniversalConstraintParser()
+        self.parser = StructuredConstraintParser()
         self.constraints = self.parser.parse_all_constraints(self.constraints_raw)
         
-        # ADD DEBUG HERE:
         print(f"DEBUG: PARSED {len(self.constraints)} CONSTRAINTS")
         for c in self.constraints[:10]:  # Show first 10
             print(f"  - {c.source.name}: {c.description}")
@@ -899,24 +988,19 @@ class ScheduleOptimizer:
         self.conflict_detector = ConflictDetector(self.constraints, self.stripboard)
         self.conflicts = self.conflict_detector.detect_all_conflicts()
 
-         # ADD MORE DEBUG:
         print(f"DEBUG: DETECTED {len(self.conflicts)} CONFLICTS")
         print(f"DEBUG: CALENDAR HAS {len(self.calendar.shooting_days)} SHOOTING DAYS")
     
     def _determine_calendar(self) -> ShootingCalendar:
         """Determine shooting calendar from production parameters"""
-        # Try to extract from production_parameters
-        prod_params = self.constraints_raw.get('prod_parameters', '')
+        # Try to extract from operational data
+        operational_data = self.constraints_raw.get('operational_data', {})
         
-        # Look for date patterns
-        date_pattern = r'(?:starting|beginning|from)\s+(\w+\s+\d+,?\s+\d{4})'
-        start_match = re.search(date_pattern, prod_params)
-        
-        if start_match:
-            # Parse start date
-            start_str = start_match.group(1)
-            # Convert to standard format
-            # Simplified - use default for now
+        # Look for production rules with date information
+        if 'production_rules' in operational_data:
+            # Try to parse dates from production rules
+            # For now, use default
+            pass
         
         # Default: 45 shooting days starting from Sept 1, 2025
         return ShootingCalendar("2025-09-01", "2025-10-31")
@@ -1030,6 +1114,7 @@ class ScheduleOptimizer:
 async def optimize_schedule(request: ScheduleRequest):
     """
     Advanced 3-phase film schedule optimization
+    Updated to work with structured constraints from n8n
     """
     try:
         optimizer = ScheduleOptimizer(request)
@@ -1049,7 +1134,7 @@ async def optimize_schedule(request: ScheduleRequest):
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "version": "2.0.0", "phases": 3}
+    return {"status": "healthy", "version": "3.0.0", "phases": 3, "parser": "structured"}
 
 if __name__ == "__main__":
     import uvicorn
