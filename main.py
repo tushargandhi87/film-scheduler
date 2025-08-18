@@ -105,38 +105,75 @@ class StructuredConstraintParser:
         """Parse all structured constraint groups from n8n"""
         all_constraints = []
         
-        # Parse each constraint group
-        if 'people_constraints' in constraints_dict:
-            all_constraints.extend(self._parse_people_constraints(constraints_dict['people_constraints']))
+        print(f"DEBUG: Starting constraint parsing with keys: {list(constraints_dict.keys())}")
         
-        if 'location_constraints' in constraints_dict:
-            all_constraints.extend(self._parse_location_constraints(constraints_dict['location_constraints']))
+        try:
+            # Parse each constraint group with error handling
+            if 'people_constraints' in constraints_dict:
+                print("DEBUG: Parsing people_constraints")
+                people_constraints = self._parse_people_constraints(constraints_dict['people_constraints'])
+                all_constraints.extend(people_constraints)
+                print(f"DEBUG: Added {len(people_constraints)} people constraints")
+            
+            if 'location_constraints' in constraints_dict:
+                print("DEBUG: Parsing location_constraints")
+                location_constraints = self._parse_location_constraints(constraints_dict['location_constraints'])
+                all_constraints.extend(location_constraints)
+                print(f"DEBUG: Added {len(location_constraints)} location constraints")
+            
+            if 'technical_constraints' in constraints_dict:
+                print("DEBUG: Parsing technical_constraints")
+                technical_constraints = self._parse_technical_constraints(constraints_dict['technical_constraints'])
+                all_constraints.extend(technical_constraints)
+                print(f"DEBUG: Added {len(technical_constraints)} technical constraints")
+            
+            if 'creative_constraints' in constraints_dict:
+                print("DEBUG: Parsing creative_constraints")
+                creative_constraints = self._parse_creative_constraints(constraints_dict['creative_constraints'])
+                all_constraints.extend(creative_constraints)
+                print(f"DEBUG: Added {len(creative_constraints)} creative constraints")
+            
+            if 'operational_data' in constraints_dict:
+                print("DEBUG: Parsing operational_data")
+                operational_constraints = self._parse_operational_data(constraints_dict['operational_data'])
+                all_constraints.extend(operational_constraints)
+                print(f"DEBUG: Added {len(operational_constraints)} operational constraints")
         
-        if 'technical_constraints' in constraints_dict:
-            all_constraints.extend(self._parse_technical_constraints(constraints_dict['technical_constraints']))
+        except Exception as e:
+            print(f"DEBUG: Error in constraint parsing: {e}")
+            import traceback
+            traceback.print_exc()
         
-        if 'creative_constraints' in constraints_dict:
-            all_constraints.extend(self._parse_creative_constraints(constraints_dict['creative_constraints']))
-        
-        if 'operational_data' in constraints_dict:
-            all_constraints.extend(self._parse_operational_data(constraints_dict['operational_data']))
-        
+        print(f"DEBUG: Total constraints parsed: {len(all_constraints)}")
         return all_constraints
     
     def _parse_people_constraints(self, people_data: Dict) -> List[Constraint]:
         """Parse actor availability constraints"""
         constraints = []
         
-        if 'actors' in people_data:
-            actors_data = people_data['actors']
-            
-            # Handle different possible structures
-            if 'actors' in actors_data:  # Nested structure
-                actors_info = actors_data['actors']
-            else:
-                actors_info = actors_data
-            
-            for actor_name, actor_info in actors_info.items():
+        # Add defensive programming to handle any structure
+        try:
+            if 'actors' in people_data:
+                actors_data = people_data['actors']
+                
+                # Handle multiple possible nested structures
+                if isinstance(actors_data, dict) and 'actors' in actors_data:
+                    actors_info = actors_data['actors']
+                elif isinstance(actors_data, dict):
+                    actors_info = actors_data
+                else:
+                    print(f"DEBUG: Unexpected actors_data type: {type(actors_data)}")
+                    return constraints
+                
+                if not isinstance(actors_info, dict):
+                    print(f"DEBUG: actors_info is not dict: {type(actors_info)}")
+                    return constraints
+                
+                for actor_name, actor_info in actors_info.items():
+                if not isinstance(actor_info, dict):
+                    print(f"DEBUG: Skipping {actor_name}, not a dict: {type(actor_info)}")
+                    continue
+                    
                 constraint_level = actor_info.get('constraint_level', 'Hard')
                 constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
                 
@@ -186,71 +223,82 @@ class StructuredConstraintParser:
         """Parse location availability and travel time constraints"""
         constraints = []
         
-        # Parse location availability
-        if 'locations' in location_data:
-            locations_info = location_data['locations']
-            
-            # Handle nested structure
-            if 'locations' in locations_info:
-                locations_dict = locations_info['locations']
-            else:
-                locations_dict = locations_info
-            
-            for location_name, location_info in locations_dict.items():
-                if 'constraints' in location_info:
-                    for constraint_info in location_info['constraints']:
-                        constraint_level = constraint_info.get('constraint_level', 'Hard')
-                        constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
-                        
+        # Add defensive programming
+        try:
+            # Parse location availability
+            if 'locations' in location_data:
+                locations_info = location_data['locations']
+                
+                # Handle nested structure safely
+                if isinstance(locations_info, dict) and 'locations' in locations_info:
+                    locations_dict = locations_info['locations']
+                elif isinstance(locations_info, dict):
+                    locations_dict = locations_info
+                else:
+                    print(f"DEBUG: Unexpected locations_info type: {type(locations_info)}")
+                    locations_dict = {}
+                
+                if isinstance(locations_dict, dict):
+                    for location_name, location_info in locations_dict.items():
+                        if isinstance(location_info, dict) and 'constraints' in location_info:
+                            for constraint_info in location_info['constraints']:
+                                if isinstance(constraint_info, dict):
+                                    constraint_level = constraint_info.get('constraint_level', 'Hard')
+                                    constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+                                    
+                                    constraints.append(Constraint(
+                                        source=ConstraintPriority.LOCATION,
+                                        type=constraint_type,
+                                        description=f"{location_name}: {constraint_info.get('details', '')}",
+                                        affected_scenes=[],
+                                        location_restriction={
+                                            'location': location_name,
+                                            'category': constraint_info.get('category'),
+                                            'details': constraint_info.get('details')
+                                        }
+                                    ))
+        
+            # Parse travel times safely
+            if 'travel_times' in location_data:
+                travel_data = location_data['travel_times']
+                if isinstance(travel_data, dict) and 'travel_times' in travel_data:
+                    travel_times = travel_data['travel_times']
+                else:
+                    travel_times = travel_data
+                
+                # Handle new array structure
+                if isinstance(travel_times, list):
+                    for travel_info in travel_times:
+                        if isinstance(travel_info, dict):
+                            route_key = f"{travel_info.get('from_location_fictional', '')}_to_{travel_info.get('to_location_fictional', '')}"
+                            constraints.append(Constraint(
+                                source=ConstraintPriority.LOCATION,
+                                type=ConstraintType.SOFT,
+                                description=f"Travel time {route_key}: {travel_info.get('estimated_travel_time_minutes', 0)} minutes",
+                                affected_scenes=[],
+                                location_restriction={
+                                    'from_location': travel_info.get('from_location_fictional', ''),
+                                    'to_location': travel_info.get('to_location_fictional', ''),
+                                    'travel_time_minutes': travel_info.get('estimated_travel_time_minutes', 0),
+                                    'notes': travel_info.get('notes', '')
+                                }
+                            ))
+                elif isinstance(travel_times, dict):
+                    # Handle old dictionary structure (fallback)
+                    for route, time_str in travel_times.items():
                         constraints.append(Constraint(
                             source=ConstraintPriority.LOCATION,
-                            type=constraint_type,
-                            description=f"{location_name}: {constraint_info.get('details', '')}",
+                            type=ConstraintType.SOFT,
+                            description=f"Travel time {route}: {time_str}",
                             affected_scenes=[],
                             location_restriction={
-                                'location': location_name,
-                                'category': constraint_info.get('category'),
-                                'details': constraint_info.get('details')
+                                'route': route,
+                                'travel_time': time_str
                             }
                         ))
         
-        # Parse travel times
-        if 'travel_times' in location_data:
-            travel_data = location_data['travel_times']
-            if 'travel_times' in travel_data:  # Nested structure
-                travel_times = travel_data['travel_times']
-            else:
-                travel_times = travel_data
-            
-            # Handle new array structure
-            if isinstance(travel_times, list):
-                for travel_info in travel_times:
-                    route_key = f"{travel_info['from_location_fictional']}_to_{travel_info['to_location_fictional']}"
-                    constraints.append(Constraint(
-                        source=ConstraintPriority.LOCATION,
-                        type=ConstraintType.SOFT,
-                        description=f"Travel time {route_key}: {travel_info['estimated_travel_time_minutes']} minutes",
-                        affected_scenes=[],
-                        location_restriction={
-                            'from_location': travel_info['from_location_fictional'],
-                            'to_location': travel_info['to_location_fictional'],
-                            'travel_time_minutes': travel_info['estimated_travel_time_minutes'],
-                            'notes': travel_info.get('notes', '')
-                        }
-                    ))
-            else:
-                # Handle old dictionary structure (fallback)
-                for route, time_str in travel_times.items():
-                    constraints.append(Constraint(
-                        source=ConstraintPriority.LOCATION,
-                        type=ConstraintType.SOFT,
-                        description=f"Travel time {route}: {time_str}",
-                        affected_scenes=[],
-                        location_restriction={
-                            'route': route,
-                            'travel_time': time_str
-                        }
-                    ))
+        except Exception as e:
+            print(f"DEBUG: Error parsing location constraints: {e}")
         
         return constraints
     
@@ -321,55 +369,89 @@ class StructuredConstraintParser:
         """Parse director and DOP constraints"""
         constraints = []
         
-        # Parse director constraints
-        if 'director_notes' in creative_data:
-            director_data = creative_data['director_notes']
-            
-            # Handle nested structure
-            if 'director_constraints' in director_data:
-                director_constraints = director_data['director_constraints']
-            else:
-                director_constraints = director_data
-            
-            for constraint_info in director_constraints:
-                constraint_level = constraint_info.get('constraint_level', 'Hard')
-                constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+        try:
+            # Parse director constraints
+            if 'director_notes' in creative_data:
+                director_data = creative_data['director_notes']
                 
-                constraints.append(Constraint(
-                    source=ConstraintPriority.DIRECTOR,
-                    type=constraint_type,
-                    description=constraint_info.get('constraint_text', ''),
-                    affected_scenes=[str(s) for s in constraint_info.get('related_scenes', [])],
-                    date_restriction={
-                        'category': constraint_info.get('category'),
-                        'locations': constraint_info.get('related_locations', [])
-                    }
-                ))
+                # Handle case where director_notes is still a markdown-wrapped string
+                if isinstance(director_data, str):
+                    # Clean markdown and parse JSON
+                    clean_json = director_data.replace('```json\n', '').replace('```', '').strip()
+                    try:
+                        director_data = json.loads(clean_json)
+                    except json.JSONDecodeError:
+                        print(f"DEBUG: Failed to parse director_notes JSON: {clean_json[:100]}...")
+                        return constraints
+                
+                # Handle nested structure
+                if isinstance(director_data, dict) and 'director_constraints' in director_data:
+                    director_constraints = director_data['director_constraints']
+                elif isinstance(director_data, list):
+                    director_constraints = director_data
+                else:
+                    print(f"DEBUG: Unexpected director_data structure: {type(director_data)}")
+                    director_constraints = []
+                
+                if isinstance(director_constraints, list):
+                    for constraint_info in director_constraints:
+                        if isinstance(constraint_info, dict):
+                            constraint_level = constraint_info.get('constraint_level', 'Hard')
+                            constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+                            
+                            constraints.append(Constraint(
+                                source=ConstraintPriority.DIRECTOR,
+                                type=constraint_type,
+                                description=constraint_info.get('constraint_text', ''),
+                                affected_scenes=[str(s) for s in constraint_info.get('related_scenes', [])],
+                                date_restriction={
+                                    'category': constraint_info.get('category'),
+                                    'locations': constraint_info.get('related_locations', [])
+                                }
+                            ))
+            
+            # Parse DOP constraints
+            if 'dop_priorities' in creative_data:
+                dop_data = creative_data['dop_priorities']
+                
+                # Handle case where dop_priorities is still a markdown-wrapped string
+                if isinstance(dop_data, str):
+                    # Clean markdown and parse JSON
+                    clean_json = dop_data.replace('```json\n', '').replace('```', '').strip()
+                    try:
+                        dop_data = json.loads(clean_json)
+                    except json.JSONDecodeError:
+                        print(f"DEBUG: Failed to parse dop_priorities JSON: {clean_json[:100]}...")
+                        return constraints
+                
+                # Handle nested structure
+                if isinstance(dop_data, dict) and 'dop_priorities' in dop_data:
+                    dop_constraints = dop_data['dop_priorities']
+                elif isinstance(dop_data, list):
+                    dop_constraints = dop_data
+                else:
+                    print(f"DEBUG: Unexpected dop_data structure: {type(dop_data)}")
+                    dop_constraints = []
+                
+                if isinstance(dop_constraints, list):
+                    for constraint_info in dop_constraints:
+                        if isinstance(constraint_info, dict):
+                            constraint_level = constraint_info.get('constraint_level', 'Hard')
+                            constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+                            
+                            constraints.append(Constraint(
+                                source=ConstraintPriority.DOP,
+                                type=constraint_type,
+                                description=constraint_info.get('constraint_text', ''),
+                                affected_scenes=[str(s) for s in constraint_info.get('related_scenes', [])],
+                                location_restriction={
+                                    'category': constraint_info.get('category'),
+                                    'locations': constraint_info.get('related_locations', [])
+                                }
+                            ))
         
-        # Parse DOP constraints
-        if 'dop_priorities' in creative_data:
-            dop_data = creative_data['dop_priorities']
-            
-            # Handle nested structure
-            if 'dop_priorities' in dop_data:
-                dop_constraints = dop_data['dop_priorities']
-            else:
-                dop_constraints = dop_data
-            
-            for constraint_info in dop_constraints:
-                constraint_level = constraint_info.get('constraint_level', 'Hard')
-                constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
-                
-                constraints.append(Constraint(
-                    source=ConstraintPriority.DOP,
-                    type=constraint_type,
-                    description=constraint_info.get('constraint_text', ''),
-                    affected_scenes=[str(s) for s in constraint_info.get('related_scenes', [])],
-                    location_restriction={
-                        'category': constraint_info.get('category'),
-                        'locations': constraint_info.get('related_locations', [])
-                    }
-                ))
+        except Exception as e:
+            print(f"DEBUG: Error parsing creative constraints: {e}")
         
         return constraints
     
