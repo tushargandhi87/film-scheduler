@@ -170,8 +170,8 @@ class StructuredConstraintParser:
                     return constraints
                 
                 for actor_name, actor_info in actors_info.items():
-                    if not isinstance(actor_info, dict):
-                        print(f"DEBUG: Skipping {actor_name}, not a dict: {type(actor_info)}")
+                if not isinstance(actor_info, dict):
+                    print(f"DEBUG: Skipping {actor_name}, not a dict: {type(actor_info)}")
                     continue
                     
                 constraint_level = actor_info.get('constraint_level', 'Hard')
@@ -216,10 +216,7 @@ class StructuredConstraintParser:
                             'required_days': actor_info['days']
                         }
                     ))
-        # update by tushar 18-08-2025
-        except Exception as e:
-            print(f"DEBUG: Error parsing actor availability constraints: {e}")
-        #####
+        
         return constraints
     
     def _parse_location_constraints(self, location_data: Dict) -> List[Constraint]:
@@ -1088,7 +1085,11 @@ class ScheduleOptimizer:
             pass
         
         # Default: 45 shooting days starting from Sept 1, 2025
-        return ShootingCalendar("2025-09-01", "2025-10-31")
+        calendar = ShootingCalendar("2025-09-01", "2025-10-31")
+        print(f"DEBUG: Generated {len(calendar.shooting_days)} shooting days")
+        print(f"DEBUG: First day: {calendar.shooting_days[0] if calendar.shooting_days else 'None'}")
+        print(f"DEBUG: Last day: {calendar.shooting_days[-1] if calendar.shooting_days else 'None'}")
+        return calendar
     
     def optimize(self) -> Dict[str, Any]:
         """Run 3-phase optimization"""
