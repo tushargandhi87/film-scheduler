@@ -170,8 +170,8 @@ class StructuredConstraintParser:
                     return constraints
                 
                 for actor_name, actor_info in actors_info.items():
-                if not isinstance(actor_info, dict):
-                    print(f"DEBUG: Skipping {actor_name}, not a dict: {type(actor_info)}")
+                    if not isinstance(actor_info, dict):
+                        print(f"DEBUG: Skipping {actor_name}, not a dict: {type(actor_info)}")
                     continue
                     
                 constraint_level = actor_info.get('constraint_level', 'Hard')
@@ -216,7 +216,10 @@ class StructuredConstraintParser:
                             'required_days': actor_info['days']
                         }
                     ))
-        
+        # update by tushar 18-08-2025
+        except Exception as e:
+            print(f"DEBUG: Error parsing actor availability constraints: {e}")
+        #####
         return constraints
     
     def _parse_location_constraints(self, location_data: Dict) -> List[Constraint]:
