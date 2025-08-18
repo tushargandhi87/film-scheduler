@@ -170,8 +170,8 @@ class StructuredConstraintParser:
                     return constraints
                 
                 for actor_name, actor_info in actors_info.items():
-                if not isinstance(actor_info, dict):
-                    print(f"DEBUG: Skipping {actor_name}, not a dict: {type(actor_info)}")
+                    if not isinstance(actor_info, dict):
+                        print(f"DEBUG: Skipping {actor_name}, not a dict: {type(actor_info)}")
                     continue
                     
                 constraint_level = actor_info.get('constraint_level', 'Hard')
