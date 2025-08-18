@@ -216,7 +216,10 @@ class StructuredConstraintParser:
                             'required_days': actor_info['days']
                         }
                     ))
-        
+        ### updated by tushar 18-08-2025
+        except Exception as e:
+            print(f"DEBUG: Error parsing location constraints: {e}")
+        ######    
         return constraints
     
     def _parse_location_constraints(self, location_data: Dict) -> List[Constraint]:
