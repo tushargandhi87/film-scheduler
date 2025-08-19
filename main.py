@@ -496,43 +496,43 @@ class LocationClusterManager:
             print(f"  Cluster {i}: {cluster.location} - {len(cluster.scenes)} scenes")
     
     def _create_location_clusters(self) -> List[LocationCluster]:
-    """Group scenes by geographic location"""
-    location_groups = defaultdict(list)
+        """Group scenes by geographic location"""
+        location_groups = defaultdict(list)
     
-    for scene in self.stripboard:
-        location = scene.get('Geographic_Location', 'Unknown Location')
-        location_groups[location].append(scene)
+        for scene in self.stripboard:
+            location = scene.get('Geographic_Location', 'Unknown Location')
+            location_groups[location].append(scene)
     
-    clusters = []
-    for location, scenes in location_groups.items():
-        # Use scene time estimates if available
-        total_minutes = 0
-        for scene in scenes:
-            # Look for time estimate in scene data
-            time_estimate = scene.get('Estimated_Time_Minutes', 60)  # Default 1 hour
-            total_minutes += time_estimate
+        clusters = []
+        for location, scenes in location_groups.items():
+            # Use scene time estimates if available
+            total_minutes = 0
+            for scene in scenes:
+                # Look for time estimate in scene data
+                time_estimate = scene.get('Estimated_Time_Minutes', 60)  # Default 1 hour
+                total_minutes += time_estimate
         
         # Convert to shooting days (assuming 8 hours = 480 minutes per day)
-        estimated_days = max(1, (total_minutes + 240) // 480)
+            estimated_days = max(1, (total_minutes + 240) // 480)
         
         # Extract actors
-        all_actors = set()
-        for scene in scenes:
-            cast = scene.get('Cast', [])
-            if isinstance(cast, list):
-                all_actors.update(cast)
-            elif isinstance(cast, str):
-                all_actors.update([cast])
+            all_actors = set()
+            for scene in scenes:
+                cast = scene.get('Cast', [])
+                if isinstance(cast, list):
+                    all_actors.update(cast)
+                elif isinstance(cast, str):
+                    all_actors.update([cast])
         
-        clusters.append(LocationCluster(
-            location=location,
-            scenes=scenes,
-            total_pages=0.0,  # Not needed
-            estimated_days=estimated_days,
-            required_actors=list(all_actors)
-        ))
+            clusters.append(LocationCluster(
+                location=location,
+                scenes=scenes,
+                total_pages=0.0,  # Not needed
+                estimated_days=estimated_days,
+                required_actors=list(all_actors)
+            ))
     
-    return clusters
+        return clusters
 
 class LocationFirstGA:
     """Location-First Genetic Algorithm for scheduling"""
