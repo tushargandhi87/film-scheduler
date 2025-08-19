@@ -1023,7 +1023,7 @@ class ScheduleOptimizer:
         print(f"DEBUG: CALENDAR HAS {len(self.calendar.shooting_days)} SHOOTING DAYS")
     
     def optimize(self) -> Dict[str, Any]:
-        """Run location-first optimization with missing scenes tracking"""
+        """Run location-first optimization - WITH MISSING SCENES IN OUTPUT"""
         import time
         start_time = time.time()
         
@@ -1040,10 +1040,10 @@ class ScheduleOptimizer:
         # Calculate metrics
         metrics = self._calculate_metrics(final_schedule)
         
-        # NEW: Add missing scenes summary
+        # NEW: Create missing scenes summary
         missing_scenes_summary = {
-            'total_missing_scenes': len(self.missing_scenes_summary),
-            'missing_scenes_details': self.missing_scenes_summary
+            'total_missing_scenes': len(getattr(self, 'missing_scenes_summary', [])),
+            'missing_scenes_details': getattr(self, 'missing_scenes_summary', [])
         }
         
         processing_time = time.time() - start_time
@@ -1051,7 +1051,7 @@ class ScheduleOptimizer:
         return {
             'schedule': final_schedule,
             'summary': schedule_summary,
-            'missing_scenes': missing_scenes_summary,  # NEW: Missing scenes info
+            'missing_scenes': missing_scenes_summary,  # NEW: This will appear in output
             'conflicts': [],
             'metrics': metrics,
             'fitness_score': best_fitness,
@@ -1059,7 +1059,7 @@ class ScheduleOptimizer:
         }
     
     def _build_final_schedule(self, individual: Dict) -> List[Dict]:
-        """Build final day-by-day schedule with missing scenes tracking and real time estimates"""
+        """Build final day-by-day schedule from best individual - WITH MISSING SCENES TRACKING"""
         schedule = []
         
         sequence = individual['sequence']
@@ -1092,9 +1092,9 @@ class ScheduleOptimizer:
             for day_offset in range(cluster.estimated_days):
                 shooting_day_idx = actual_start_day + day_offset
                 
-                # Check if we exceed calendar
+                # NEW: Check if we exceed calendar and track missing scenes
                 if shooting_day_idx >= len(self.calendar.shooting_days):
-                    # NEW: Track scenes that exceed calendar
+                    # Track scenes that exceed calendar bounds
                     remaining_scenes = cluster_scenes[day_offset * scenes_per_day:]
                     for scene in remaining_scenes:
                         if scene['Scene_Number'] not in scheduled_scenes:
@@ -1102,7 +1102,7 @@ class ScheduleOptimizer:
                                 'scene_number': scene['Scene_Number'],
                                 'location_name': scene.get('Location_Name', 'Unknown'),
                                 'reason': 'Calendar overflow - exceeds available shooting days',
-                                'cluster_location': cluster.location
+                                'geographic_location': scene.get('Geographic_Location', 'Unknown')
                             })
                     break
                     
@@ -1123,9 +1123,6 @@ class ScheduleOptimizer:
                     for scene in daily_scenes:
                         scheduled_scenes.add(scene['Scene_Number'])
                     
-                    # NEW: Calculate actual estimated hours from scene time estimates
-                    total_estimated_hours = self._calculate_day_hours(daily_scenes)
-                    
                     schedule.append({
                         'day': shooting_day_idx + 1,
                         'date': shooting_date.strftime("%Y-%m-%d"),
@@ -1134,7 +1131,7 @@ class ScheduleOptimizer:
                         'scenes': daily_scenes,
                         'scene_count': len(daily_scenes),
                         'location_moves': 0,  # Single location per day
-                        'estimated_hours': total_estimated_hours  # NEW: Real time estimates
+                        'estimated_hours': len(daily_scenes) * 1.5  # Keep existing logic for now
                     })
             
             # Always advance by cluster duration (consecutive scheduling)
@@ -1151,8 +1148,13 @@ class ScheduleOptimizer:
         for scene_num in never_clustered_scenes:
             scene_data = next((s for s in self.stripboard if s['Scene_Number'] == scene_num), None)
             if scene_data:
-                geo_location = scene_data.get('Geographic_Location', 'None')
-                reason = 'No valid geographic location' if geo_location in ['Location TBD', '', None] else 'Unknown clustering issue'
+                geo_location = scene_data.get('Geographic_Location', 'Unknown')
+                
+                if geo_location in ['Location TBD', '', None, 'Unknown Location']:
+                    reason = 'No valid geographic location - Location TBD or empty'
+                else:
+                    reason = 'Failed to cluster - unknown issue'
+                    
                 missing_scenes.append({
                     'scene_number': scene_num,
                     'location_name': scene_data.get('Location_Name', 'Unknown'),
@@ -1160,7 +1162,7 @@ class ScheduleOptimizer:
                     'geographic_location': geo_location
                 })
         
-        # Store missing scenes for reporting
+        # NEW: Store missing scenes for reporting
         self.missing_scenes_summary = missing_scenes
         
         return schedule
