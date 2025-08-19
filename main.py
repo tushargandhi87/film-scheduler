@@ -1052,24 +1052,23 @@ class ScheduleOptimizer:
         }
     
     def _build_final_schedule(self, individual: Dict) -> List[Dict]:
-        """Build final day-by-day schedule from best individual - FIXED VERSION"""
+        """Build final day-by-day schedule from best individual - CALENDAR FIXED"""
         schedule = []
         
         sequence = individual['sequence']
-        day_assignments = individual['day_assignments']
+        day_assignments = individual['day_assignments']  # GA assignments (we'll ignore these for consecutive scheduling)
         
         # Track which scenes have been scheduled to prevent duplicates
         scheduled_scenes = set()
         
-        # Build day-by-day schedule ensuring no scene duplication
-        current_day_idx = 0
+        # FIXED: Force consecutive scheduling starting from Day 1 (index 0)
+        current_day_idx = 0  # Always start from Day 1
         
         for i, cluster_idx in enumerate(sequence):
             cluster = self.cluster_manager.clusters[cluster_idx]
-            start_day = day_assignments[i]
             
-            # Calculate actual starting day (ensure consecutive scheduling)
-            actual_start_day = max(current_day_idx, start_day)
+            # FIXED: Always use consecutive days (ignore GA day assignments)
+            actual_start_day = current_day_idx
             
             # Distribute cluster scenes across estimated days
             cluster_scenes = [scene for scene in cluster.scenes 
@@ -1105,18 +1104,18 @@ class ScheduleOptimizer:
                         scheduled_scenes.add(scene['Scene_Number'])
                     
                     schedule.append({
-                        'day': shooting_day_idx + 1,  # 1-indexed for human readability
+                        'day': shooting_day_idx + 1,  # Day 1, 2, 3, 4... (consecutive)
                         'date': shooting_date.strftime("%Y-%m-%d"),
                         'location': cluster.location,
                         'location_name': self._extract_location_name(cluster.location),
                         'scenes': daily_scenes,
                         'scene_count': len(daily_scenes),
                         'location_moves': 0,  # Single location per day
-                        'estimated_hours': len(daily_scenes) * 1.5  # Rough estimate
+                        'estimated_hours': len(daily_scenes) * 1.5
                     })
             
-            # Update current day for next cluster
-            current_day_idx = actual_start_day + cluster.estimated_days
+            # FIXED: Always advance by cluster duration (consecutive scheduling)
+            current_day_idx += cluster.estimated_days
         
         return schedule
 
@@ -1155,7 +1154,12 @@ class ScheduleOptimizer:
         n_unique_locations = len(self.cluster_manager.clusters)
         
         # Calculate efficiency - 0 moves is perfect (1 location per day)
-        theoretical_minimum_moves = 0  # Perfect location clustering = 0 moves
+        theoretical_minimum_moves = max(0, n_unique_locations - 1)  # CORRECT!
+        # EXPLANATION:
+        # To visit N unique locations, you need at least N-1 moves between them
+        # Example: 18 locations = 17 minimum moves
+        # Since you achieve 0 moves (perfect clustering), efficiency = perfect
+        
         efficiency_ratio = 1.0 if total_moves == 0 else theoretical_minimum_moves / max(total_moves, 1)
         
         # Calculate locations per day
