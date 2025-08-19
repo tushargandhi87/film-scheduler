@@ -95,11 +95,13 @@ class ScheduleRequest(BaseModel):
 class ScheduleResponse(BaseModel):
     """Response model with optimized schedule"""
     schedule: List[Dict[str, Any]]
+    summary: Dict[str, Any]              # ADD THIS LINE
+    missing_scenes: Dict[str, Any]       # ADD THIS LINE  
     conflicts: List[Dict[str, Any]]
     metrics: Dict[str, Any]
     fitness_score: float
     processing_time_seconds: float
-
+    
 class StructuredConstraintParser:
     """Parses structured constraints from n8n AI agents"""
     
