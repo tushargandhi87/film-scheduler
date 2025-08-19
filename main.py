@@ -1023,7 +1023,7 @@ class ScheduleOptimizer:
         print(f"DEBUG: CALENDAR HAS {len(self.calendar.shooting_days)} SHOOTING DAYS")
     
     def optimize(self) -> Dict[str, Any]:
-        """Run location-first optimization with ENHANCED output format"""
+        """Run location-first optimization with missing scenes tracking"""
         import time
         start_time = time.time()
         
@@ -1034,40 +1034,50 @@ class ScheduleOptimizer:
         # Build final schedule from best individual
         final_schedule = self._build_final_schedule(best_individual)
         
-        # ENHANCED: Add summary section
+        # Add summary section
         schedule_summary = self._build_schedule_summary(final_schedule)
         
         # Calculate metrics
         metrics = self._calculate_metrics(final_schedule)
         
+        # NEW: Add missing scenes summary
+        missing_scenes_summary = {
+            'total_missing_scenes': len(self.missing_scenes_summary),
+            'missing_scenes_details': self.missing_scenes_summary
+        }
+        
         processing_time = time.time() - start_time
         
         return {
             'schedule': final_schedule,
-            'summary': schedule_summary,  # NEW: Summary section
-            'conflicts': [],  # Simplified for now
+            'summary': schedule_summary,
+            'missing_scenes': missing_scenes_summary,  # NEW: Missing scenes info
+            'conflicts': [],
             'metrics': metrics,
             'fitness_score': best_fitness,
             'processing_time_seconds': processing_time
         }
     
     def _build_final_schedule(self, individual: Dict) -> List[Dict]:
-        """Build final day-by-day schedule from best individual - CALENDAR FIXED"""
+        """Build final day-by-day schedule with missing scenes tracking and real time estimates"""
         schedule = []
         
         sequence = individual['sequence']
-        day_assignments = individual['day_assignments']  # GA assignments (we'll ignore these for consecutive scheduling)
+        day_assignments = individual['day_assignments']
         
         # Track which scenes have been scheduled to prevent duplicates
         scheduled_scenes = set()
         
-        # FIXED: Force consecutive scheduling starting from Day 1 (index 0)
-        current_day_idx = 0  # Always start from Day 1
+        # NEW: Track missing scenes with reasons
+        missing_scenes = []
+        
+        # Force consecutive scheduling starting from Day 1 (index 0)
+        current_day_idx = 0
         
         for i, cluster_idx in enumerate(sequence):
             cluster = self.cluster_manager.clusters[cluster_idx]
             
-            # FIXED: Always use consecutive days (ignore GA day assignments)
+            # Always use consecutive days
             actual_start_day = current_day_idx
             
             # Distribute cluster scenes across estimated days
@@ -1082,8 +1092,18 @@ class ScheduleOptimizer:
             for day_offset in range(cluster.estimated_days):
                 shooting_day_idx = actual_start_day + day_offset
                 
-                # Ensure we don't exceed calendar
+                # Check if we exceed calendar
                 if shooting_day_idx >= len(self.calendar.shooting_days):
+                    # NEW: Track scenes that exceed calendar
+                    remaining_scenes = cluster_scenes[day_offset * scenes_per_day:]
+                    for scene in remaining_scenes:
+                        if scene['Scene_Number'] not in scheduled_scenes:
+                            missing_scenes.append({
+                                'scene_number': scene['Scene_Number'],
+                                'location_name': scene.get('Location_Name', 'Unknown'),
+                                'reason': 'Calendar overflow - exceeds available shooting days',
+                                'cluster_location': cluster.location
+                            })
                     break
                     
                 shooting_date = self.calendar.shooting_days[shooting_day_idx]
@@ -1103,19 +1123,45 @@ class ScheduleOptimizer:
                     for scene in daily_scenes:
                         scheduled_scenes.add(scene['Scene_Number'])
                     
+                    # NEW: Calculate actual estimated hours from scene time estimates
+                    total_estimated_hours = self._calculate_day_hours(daily_scenes)
+                    
                     schedule.append({
-                        'day': shooting_day_idx + 1,  # Day 1, 2, 3, 4... (consecutive)
+                        'day': shooting_day_idx + 1,
                         'date': shooting_date.strftime("%Y-%m-%d"),
                         'location': cluster.location,
                         'location_name': self._extract_location_name(cluster.location),
                         'scenes': daily_scenes,
                         'scene_count': len(daily_scenes),
                         'location_moves': 0,  # Single location per day
-                        'estimated_hours': len(daily_scenes) * 1.5
+                        'estimated_hours': total_estimated_hours  # NEW: Real time estimates
                     })
             
-            # FIXED: Always advance by cluster duration (consecutive scheduling)
+            # Always advance by cluster duration (consecutive scheduling)
             current_day_idx += cluster.estimated_days
+        
+        # NEW: Check for scenes that were never included in any cluster
+        all_original_scenes = {scene['Scene_Number'] for scene in self.stripboard}
+        all_clustered_scenes = set()
+        for cluster in self.cluster_manager.clusters:
+            for scene in cluster.scenes:
+                all_clustered_scenes.add(scene['Scene_Number'])
+        
+        never_clustered_scenes = all_original_scenes - all_clustered_scenes
+        for scene_num in never_clustered_scenes:
+            scene_data = next((s for s in self.stripboard if s['Scene_Number'] == scene_num), None)
+            if scene_data:
+                geo_location = scene_data.get('Geographic_Location', 'None')
+                reason = 'No valid geographic location' if geo_location in ['Location TBD', '', None] else 'Unknown clustering issue'
+                missing_scenes.append({
+                    'scene_number': scene_num,
+                    'location_name': scene_data.get('Location_Name', 'Unknown'),
+                    'reason': reason,
+                    'geographic_location': geo_location
+                })
+        
+        # Store missing scenes for reporting
+        self.missing_scenes_summary = missing_scenes
         
         return schedule
 
@@ -1128,14 +1174,14 @@ class ScheduleOptimizer:
         return 'Unknown Location'
 
 
-    
     def _calculate_metrics(self, schedule: List[Dict]) -> Dict[str, Any]:
-        """Calculate CORRECTED schedule metrics without duplication errors"""
+        """Calculate metrics including geographic location moves"""
         if not schedule:
             return {
                 'total_shooting_days': 0,
                 'total_scenes': 0,
                 'total_location_moves': 0,
+                'total_geographic_moves': 0,  # NEW METRIC
                 'theoretical_minimum_moves': 0,
                 'efficiency_ratio': 1.0,
                 'avg_locations_per_day': 0,
@@ -1153,14 +1199,17 @@ class ScheduleOptimizer:
         total_moves = sum(day.get('location_moves', 0) for day in schedule)
         n_unique_locations = len(self.cluster_manager.clusters)
         
-        # Calculate efficiency - 0 moves is perfect (1 location per day)
-        theoretical_minimum_moves = max(0, n_unique_locations - 1)  # CORRECT!
-        # EXPLANATION:
-        # To visit N unique locations, you need at least N-1 moves between them
-        # Example: 18 locations = 17 minimum moves
-        # Since you achieve 0 moves (perfect clustering), efficiency = perfect
+        # NEW: Calculate geographic location moves (crew moves between locations)
+        total_geographic_moves = self._calculate_geographic_moves(schedule)
         
-        efficiency_ratio = 1.0 if total_moves == 0 else theoretical_minimum_moves / max(total_moves, 1)
+        # FIXED: Correct theoretical minimum moves
+        theoretical_minimum_moves = max(0, n_unique_locations - 1)
+        
+        # Calculate efficiency - fewer geographic moves is better
+        if total_geographic_moves == 0:
+            efficiency_ratio = 1.0  # Perfect efficiency
+        else:
+            efficiency_ratio = theoretical_minimum_moves / max(total_geographic_moves, 1)
         
         # Calculate locations per day
         locations_per_day = []
@@ -1188,6 +1237,7 @@ class ScheduleOptimizer:
             'total_shooting_days': len(schedule),
             'total_scenes': len(unique_scenes),
             'total_location_moves': total_moves,
+            'total_geographic_moves': total_geographic_moves,  # NEW METRIC
             'theoretical_minimum_moves': theoretical_minimum_moves,
             'efficiency_ratio': round(efficiency_ratio, 3),
             'avg_locations_per_day': round(avg_locations_per_day, 2),
@@ -1195,6 +1245,67 @@ class ScheduleOptimizer:
             'hard_conflicts': 0,
             'soft_conflicts': 0
         }
+
+    def _calculate_day_hours(self, daily_scenes: List[Dict]) -> float:
+        """Calculate total estimated hours for a day using real scene time estimates"""
+        total_hours = 0.0
+        
+        # Get scene time estimates from constraints
+        scene_estimates = self._get_scene_time_estimates()
+        
+        for scene in daily_scenes:
+            scene_number = scene['Scene_Number']
+            
+            # Look up actual time estimate
+            estimated_hours = scene_estimates.get(scene_number, 1.5)  # Default 1.5 hours if not found
+            total_hours += estimated_hours
+        
+        return round(total_hours, 1)
+    
+    def _get_scene_time_estimates(self) -> Dict[str, float]:
+        """Extract scene time estimates from operational data"""
+        scene_estimates = {}
+        
+        try:
+            # Access: constraints.operational_data.time_estimates.scene_estimates
+            operational_data = self.constraints_raw.get('operational_data', {})
+            time_estimates = operational_data.get('time_estimates', {})
+            scene_estimates_data = time_estimates.get('scene_estimates', [])
+            
+            if isinstance(scene_estimates_data, list):
+                for scene_est in scene_estimates_data:
+                    if isinstance(scene_est, dict):
+                        scene_number = scene_est.get('Scene_Number')
+                        estimated_hours = scene_est.get('Estimated_Time_Hours', 1.5)
+                        
+                        if scene_number:
+                            scene_estimates[str(scene_number)] = float(estimated_hours)
+            
+            print(f"DEBUG: Loaded {len(scene_estimates)} scene time estimates")
+            
+        except Exception as e:
+            print(f"DEBUG: Error loading scene time estimates: {e}")
+            print("DEBUG: Using default 1.5 hours per scene")
+        
+        return scene_estimates
+
+    def _calculate_geographic_moves(self, schedule: List[Dict]) -> int:
+        """Calculate total geographic location moves (crew relocations)"""
+        if len(schedule) <= 1:
+            return 0
+        
+        geographic_moves = 0
+        previous_location = None
+        
+        for day in schedule:
+            current_location = day.get('location')
+            
+            if previous_location is not None and current_location != previous_location:
+                geographic_moves += 1
+            
+            previous_location = current_location
+        
+        return geographic_moves    
 
     def _build_schedule_summary(self, schedule: List[Dict]) -> Dict[str, Any]:
         """Build schedule summary matching desired output format"""
