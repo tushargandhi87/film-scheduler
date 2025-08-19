@@ -597,11 +597,17 @@ class LocationFirstGA:
         """Find specific travel time between locations"""
         for constraint in travel_constraints:
             restriction = constraint.location_restriction
-            if (restriction.get('from_location_fictional') in loc1 or 
-                restriction.get('to_location_fictional') in loc1) and \
-               (restriction.get('from_location_fictional') in loc2 or 
-                restriction.get('to_location_fictional') in loc2):
-                return restriction.get('travel_time_minutes', 30)
+        
+            # Get values with None check
+            from_loc = restriction.get('from_location_fictional')
+            to_loc = restriction.get('to_location_fictional')
+        
+            # Only check if both values exist and are strings
+            if from_loc and to_loc and isinstance(from_loc, str) and isinstance(to_loc, str):
+                if ((from_loc in loc1 or to_loc in loc1) and 
+                    (from_loc in loc2 or to_loc in loc2)):
+                    return restriction.get('travel_time_minutes', 30)
+    
         return None
     
     def _estimate_travel_time(self, loc1: str, loc2: str) -> float:
