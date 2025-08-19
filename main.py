@@ -101,7 +101,7 @@ class ScheduleResponse(BaseModel):
     metrics: Dict[str, Any]
     fitness_score: float
     processing_time_seconds: float
-    
+
 class StructuredConstraintParser:
     """Parses structured constraints from n8n AI agents"""
     
@@ -1357,12 +1357,14 @@ async def optimize_schedule(request: ScheduleRequest):
         
         return ScheduleResponse(
             schedule=result['schedule'],
+            summary=result['summary'],                     # NEW
+            missing_scenes=result['missing_scenes'],       # NEW
             conflicts=result['conflicts'],
             metrics=result['metrics'],
             fitness_score=result['fitness_score'],
             processing_time_seconds=result['processing_time_seconds']
         )
-    
+        
     except Exception as e:
         import traceback
         traceback.print_exc()
