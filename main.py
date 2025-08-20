@@ -626,27 +626,36 @@ class LocationFirstGA:
         self._build_constraint_maps()
         self._build_travel_times()
     
+    # STEP 2.5a: COMPLETE ACTOR CONSTRAINTS
+    # Replace these methods in LocationFirstGA class
+
     def _build_constraint_maps(self):
-        """Build efficient lookup structures for constraints"""
+        """Build efficient lookup structures for constraints - EXTENDED for complete actor data"""
+        # EXISTING: Actor unavailable dates (keep as-is)
         self.actor_unavailable_dates = defaultdict(list)
+        
+        # NEW: Complete actor constraint data
+        self.actor_available_weeks = {}      # actor -> [1, 3, 4] (only available these weeks)
+        self.actor_required_days = {}        # actor -> 5 (needs exactly 5 days)
+        self.actor_constraint_types = {}     # actor -> "weekly_availability" 
+        self.actor_constraint_levels = {}    # actor -> "Hard"
+        
+        # EXISTING: Other constraint maps
         self.director_mandates = {}
         self.location_windows = {}
         
         for constraint in self.constraints:
             if constraint.actor_restriction:
-                actor = constraint.actor_restriction.get('actor')
-                unavailable_date = constraint.actor_restriction.get('unavailable_date')
-                if actor and unavailable_date:
-                    self.actor_unavailable_dates[actor].append(unavailable_date)
-            
+                self._map_actor_constraint(constraint)
             elif constraint.source == ConstraintPriority.DIRECTOR and constraint.affected_scenes:
-                # Mark director mandates
                 for scene in constraint.affected_scenes:
                     self.director_mandates[scene] = constraint
-            
             elif constraint.location_restriction and constraint.location_restriction.get('location'):
                 location = constraint.location_restriction['location']
                 self.location_windows[location] = constraint
+    
+    # EXISTING: Build travel times (keep as-is)
+        self._build_travel_times()
     
     def _build_travel_times(self):
         """Build travel time matrix between locations"""
@@ -753,47 +762,116 @@ class LocationFirstGA:
         }
     
     def fitness(self, individual: Dict) -> float:
-        """Calculate fitness using graduated penalty system"""
+        """Calculate fitness using graduated penalty system - WITH STEP 2.5a DEBUG"""
         score = 0.0
         
         sequence = individual['sequence']
         day_assignments = individual['day_assignments']
         
-        # 1. HARD CONSTRAINT VIOLATIONS (-10,000 each)
-        hard_violations = self._count_hard_violations(sequence, day_assignments)
-        score += PENALTY_HARD_CONSTRAINT * hard_violations
+        # 1. ENHANCED: Actor constraint violations (Step 2.5a)
+        actor_violations = self._check_complete_actor_violations(sequence, day_assignments)
+        actor_penalty = PENALTY_HARD_CONSTRAINT * actor_violations
+        score += actor_penalty
         
-        # 2. LOCATION SPLITTING PENALTY (-2,000 each)
+        # 2. EXISTING: Other penalties (unchanged for now)
         location_splits = self._count_location_splits(sequence, day_assignments)
         score += PENALTY_LOCATION_SPLIT * location_splits
         
-        # 3. DIRECTOR MANDATE VIOLATIONS (-5,000 each)
         director_violations = self._count_director_violations(sequence, day_assignments)
         score += PENALTY_DIRECTOR_MANDATE * director_violations
         
-        # 4. TRAVEL TIME PENALTIES (-100 per mile)
         travel_penalty = self._calculate_travel_penalty(sequence)
         score += travel_penalty
         
-        # 5. ACTOR IDLE DAYS (-200 each)
         idle_penalty = self._calculate_actor_idle_penalty(sequence, day_assignments)
         score += idle_penalty
         
-        # 6. SOFT CONSTRAINT BONUSES (+100 each)
         soft_bonus = self._calculate_soft_bonus(sequence, day_assignments)
         score += soft_bonus
         
+        # DEBUG: Print constraint breakdown for Step 2.5a
+        if actor_violations > 0:
+            print(f"DEBUG: Fitness breakdown - Actor violations: {actor_violations}, penalty: {actor_penalty}")
+        
         return score
+
     
     def _count_hard_violations(self, sequence: List[int], day_assignments: List[int]) -> int:
-        """Count hard constraint violations"""
+        """Calculate hard constraint violations - EXTENDED for complete actor checking"""
+        violations = 0
+        
+        # EXTENDED: Complete actor constraint checking
+        actor_violations = self._check_complete_actor_violations(sequence, day_assignments)
+        violations += actor_violations
+        
+        # EXISTING: Other violations (keep as-is for now)
+        location_splits = self._count_location_splits(sequence, day_assignments)
+        violations += location_splits  # This returns 0 anyway
+        
+        director_violations = self._count_director_violations(sequence, day_assignments)
+        violations += director_violations  # This returns 0 anyway
+        
+        travel_penalty = self._calculate_travel_penalty(sequence)
+        # Note: travel_penalty is negative, not a violation count
+        
+        idle_penalty = self._calculate_actor_idle_penalty(sequence, day_assignments)
+        # Note: idle_penalty is negative, not a violation count
+        
+        if actor_violations > 0:
+            print(f"DEBUG: Found {actor_violations} actor constraint violations")
+        
+    def _map_actor_constraint(self, constraint):
+        """NEW: Map complete actor constraint data from n8n"""
+        actor_restriction = constraint.actor_restriction
+        actor = actor_restriction.get('actor')
+        
+        if not actor:
+            return
+        
+        # Store constraint metadata
+        self.actor_constraint_levels[actor] = constraint.type.value
+        
+        # EXISTING: Unavailable dates (keep working code)
+        unavailable_date = actor_restriction.get('unavailable_date')
+        if unavailable_date:
+            self.actor_unavailable_dates[actor].append(unavailable_date)
+        
+        # NEW: Available weeks
+        available_weeks = actor_restriction.get('available_weeks')
+        if available_weeks:
+            self.actor_available_weeks[actor] = available_weeks
+            print(f"DEBUG: Actor {actor} only available weeks: {available_weeks}")
+        
+        # NEW: Required days
+        required_days = actor_restriction.get('required_days')
+        if required_days:
+            self.actor_required_days[actor] = required_days
+            print(f"DEBUG: Actor {actor} needs {required_days} days") 
+
+    def _check_complete_actor_violations(self, sequence: List[int], day_assignments: List[int]) -> int:
+        """EXTENDED: Check ALL actor constraint types from n8n"""
+        violations = 0
+        
+        # EXISTING: Check unavailable dates (keep working code)
+        violations += self._check_actor_unavailable_dates(sequence, day_assignments)
+        
+        # NEW: Check available weeks
+        violations += self._check_actor_available_weeks(sequence, day_assignments)
+        
+        # NEW: Check required days
+        violations += self._check_actor_required_days(sequence, day_assignments)
+        
+        return violations           
+
+    def _check_actor_unavailable_dates(self, sequence: List[int], day_assignments: List[int]) -> int:
+        """EXISTING: Actor unavailable date checking (keep as-is, just renamed for clarity)"""
         violations = 0
         
         for i, cluster_idx in enumerate(sequence):
             cluster = self.cluster_manager.clusters[cluster_idx]
             start_day = day_assignments[i]
             
-            # Check actor availability for each day this cluster needs
+            # Check each day this cluster needs
             for day_offset in range(cluster.estimated_days):
                 shooting_day_idx = start_day + day_offset
                 if shooting_day_idx >= len(self.calendar.shooting_days):
@@ -810,11 +888,78 @@ class LocationFirstGA:
                                 unavailable_date = datetime.strptime(unavailable_date_str, "%Y-%m-%d").date()
                                 if shooting_date == unavailable_date:
                                     violations += 1
+                                    print(f"DEBUG: VIOLATION - {actor} unavailable on {shooting_date}")
                             except:
                                 pass
         
         return violations
-    
+
+    def _check_actor_available_weeks(self, sequence: List[int], day_assignments: List[int]) -> int:
+        """NEW: Check if actors are scheduled outside their available weeks"""
+        violations = 0
+        
+        for i, cluster_idx in enumerate(sequence):
+            cluster = self.cluster_manager.clusters[cluster_idx]
+            start_day = day_assignments[i]
+            
+            # Calculate which shooting week this cluster starts in
+            shooting_week = self._get_shooting_week_from_day(start_day)
+            
+            # Check each actor in this cluster
+            for actor in cluster.required_actors:
+                if actor in self.actor_available_weeks:
+                    available_weeks = self.actor_available_weeks[actor]
+                    
+                    # Check if any day of this cluster falls outside available weeks
+                    for day_offset in range(cluster.estimated_days):
+                        day_idx = start_day + day_offset
+                        if day_idx < len(self.calendar.shooting_days):
+                            day_week = self._get_shooting_week_from_day(day_idx)
+                            
+                            if day_week not in available_weeks:
+                                violations += 1
+                                print(f"DEBUG: VIOLATION - {actor} scheduled in week {day_week}, only available weeks {available_weeks}")
+                                break  # One violation per actor per cluster
+        
+        return violations
+
+    def _check_actor_required_days(self, sequence: List[int], day_assignments: List[int]) -> int:
+        """NEW: Check if actors get their required number of shooting days"""
+        violations = 0
+        
+        # Count actual shooting days per actor
+        actor_scheduled_days = defaultdict(int)
+        
+        for i, cluster_idx in enumerate(sequence):
+            cluster = self.cluster_manager.clusters[cluster_idx]
+            start_day = day_assignments[i]
+            
+            # Count days for each actor in this cluster
+            for actor in cluster.required_actors:
+                for day_offset in range(cluster.estimated_days):
+                    day_idx = start_day + day_offset
+                    if day_idx < len(self.calendar.shooting_days):
+                        actor_scheduled_days[actor] += 1
+        
+        # Check against required days
+        for actor, required_days in self.actor_required_days.items():
+            scheduled_days = actor_scheduled_days.get(actor, 0)
+            
+            if scheduled_days != required_days:
+                violations += 1
+                print(f"DEBUG: VIOLATION - {actor} scheduled {scheduled_days} days, needs {required_days}")
+        
+        return violations
+
+    def _get_shooting_week_from_day(self, day_index: int) -> int:
+        """NEW: Convert shooting day index to week number (1-based)"""
+        if day_index < 0:
+            return 1
+        
+        # Assuming 6-day weeks (Mon-Sat), with Sundays off
+        # Week 1 = days 0-5, Week 2 = days 6-11, etc.
+        return (day_index // 6) + 1
+
     def _count_location_splits(self, sequence: List[int], day_assignments: List[int]) -> int:
         """Count how many locations are split across multiple non-consecutive days"""
         # In this implementation, each cluster is assigned to consecutive days
