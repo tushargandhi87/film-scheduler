@@ -154,7 +154,7 @@ class StructuredConstraintParser:
         return all_constraints
     
     def _parse_people_constraints(self, people_data: Dict) -> List[Constraint]:
-        """Parse actor availability constraints"""
+        """Parse actor availability constraints - WITH CAST MAPPING EXTRACTION"""
         constraints = []
         
         try:
@@ -209,6 +209,22 @@ class StructuredConstraintParser:
                                     'required_days': actor_info['days']
                                 }
                             ))
+            
+            # NEW: Store cast_mapping for use by GA
+            if 'cast_mapping' in people_data:
+                cast_mapping_data = people_data['cast_mapping']
+                print(f"DEBUG: Found cast_mapping with {len(cast_mapping_data)} character mappings")
+                
+                # Store cast_mapping in a special constraint for retrieval
+                constraints.append(Constraint(
+                    source=ConstraintPriority.ACTOR,
+                    type=ConstraintType.SOFT,  # Not really a constraint, just data
+                    description="Cast mapping data",
+                    affected_scenes=[],
+                    actor_restriction={
+                        'cast_mapping': cast_mapping_data
+                    }
+                ))
         
         except Exception as e:
             print(f"DEBUG: Error parsing people constraints: {e}")
@@ -615,32 +631,39 @@ class LocationFirstGA:
     """Location-First Genetic Algorithm for scheduling"""
     
     def __init__(self, cluster_manager: LocationClusterManager, constraints: List[Constraint], 
-                 calendar: ShootingCalendar, params: Dict):
+             calendar: ShootingCalendar, params: Dict, cast_mapping: Dict[str, str]):
+        """Initialize GA - WITH CAST MAPPING"""
         self.cluster_manager = cluster_manager
         self.constraints = constraints
         self.calendar = calendar
         self.params = params
         self.rng = np.random.RandomState(params.get('seed', 42))
         
-        # Build constraint maps for efficient lookup
-        self._build_constraint_maps()
-        self._build_travel_times()
+        # NEW: Store cast mapping from n8n
+        self.cast_mapping = cast_mapping
+        print(f"DEBUG: GA received cast_mapping: {self.cast_mapping}")
+    
+    # Build constraint maps for efficient lookup
+    self._build_constraint_maps()
+    self._build_travel_times()
     
     # STEP 2.5a: COMPLETE ACTOR CONSTRAINTS
     # Replace these methods in LocationFirstGA class
 
     def _build_constraint_maps(self):
-        """Build efficient lookup structures for constraints - EXTENDED for complete actor data"""
-        # EXISTING: Actor unavailable dates (keep as-is)
+        """Build efficient lookup structures for constraints - USING N8N CAST MAPPING"""
+        # Actor constraint data structures (unchanged)
         self.actor_unavailable_dates = defaultdict(list)
+        self.actor_available_weeks = {}
+        self.actor_required_days = {}
+        self.actor_constraint_types = {}
+        self.actor_constraint_levels = {}
         
-        # NEW: Complete actor constraint data
-        self.actor_available_weeks = {}      # actor -> [1, 3, 4] (only available these weeks)
-        self.actor_required_days = {}        # actor -> 5 (needs exactly 5 days)
-        self.actor_constraint_types = {}     # actor -> "weekly_availability" 
-        self.actor_constraint_levels = {}    # actor -> "Hard"
+        # REMOVED: No more hard-coded mapping
+        # self.actor_to_character_map = {}  # DELETED
+        # self._build_actor_character_mapping()  # DELETED
         
-        # EXISTING: Other constraint maps
+        # Other constraint maps (unchanged)
         self.director_mandates = {}
         self.location_windows = {}
         
@@ -653,8 +676,7 @@ class LocationFirstGA:
             elif constraint.location_restriction and constraint.location_restriction.get('location'):
                 location = constraint.location_restriction['location']
                 self.location_windows[location] = constraint
-    
-    # EXISTING: Build travel times (keep as-is)
+        
         self._build_travel_times()
     
     def _build_travel_times(self):
@@ -864,7 +886,7 @@ class LocationFirstGA:
         return violations           
 
     def _check_actor_unavailable_dates(self, sequence: List[int], day_assignments: List[int]) -> int:
-        """EXISTING: Actor unavailable date checking (keep as-is, just renamed for clarity)"""
+        """NEW: Check unavailable dates using n8n cast_mapping"""
         violations = 0
         
         for i, cluster_idx in enumerate(sequence):
@@ -875,39 +897,40 @@ class LocationFirstGA:
             for day_offset in range(cluster.estimated_days):
                 shooting_day_idx = start_day + day_offset
                 if shooting_day_idx >= len(self.calendar.shooting_days):
-                    violations += 1  # Exceeds calendar
+                    violations += 1
                     continue
                 
                 shooting_date = self.calendar.shooting_days[shooting_day_idx]
                 
-                # Check each actor required for this cluster
-                for actor in cluster.required_actors:
-                    if actor in self.actor_unavailable_dates:
+                # Check each character in this cluster
+                for character in cluster.required_actors:
+                    actor = self._get_actor_for_character(character)
+                    
+                    if actor and actor in self.actor_unavailable_dates:
                         for unavailable_date_str in self.actor_unavailable_dates[actor]:
                             try:
                                 unavailable_date = datetime.strptime(unavailable_date_str, "%Y-%m-%d").date()
                                 if shooting_date == unavailable_date:
                                     violations += 1
-                                    print(f"DEBUG: VIOLATION - {actor} unavailable on {shooting_date}")
+                                    print(f"DEBUG: VIOLATION - Actor '{actor}' (character '{character}') unavailable on {shooting_date}")
                             except:
                                 pass
         
-        return violations
+        return violations    
 
     def _check_actor_available_weeks(self, sequence: List[int], day_assignments: List[int]) -> int:
-        """NEW: Check if actors are scheduled outside their available weeks"""
+        """FIXED: Check available weeks using n8n cast_mapping"""
         violations = 0
         
         for i, cluster_idx in enumerate(sequence):
             cluster = self.cluster_manager.clusters[cluster_idx]
             start_day = day_assignments[i]
             
-            # Calculate which shooting week this cluster starts in
-            shooting_week = self._get_shooting_week_from_day(start_day)
-            
-            # Check each actor in this cluster
-            for actor in cluster.required_actors:
-                if actor in self.actor_available_weeks:
+            # Check each character in this cluster
+            for character in cluster.required_actors:
+                actor = self._get_actor_for_character(character)
+                
+                if actor and actor in self.actor_available_weeks:
                     available_weeks = self.actor_available_weeks[actor]
                     
                     # Check if any day of this cluster falls outside available weeks
@@ -918,69 +941,58 @@ class LocationFirstGA:
                             
                             if day_week not in available_weeks:
                                 violations += 1
-                                print(f"DEBUG: VIOLATION - {actor} scheduled in week {day_week}, only available weeks {available_weeks}")
-                                break  # One violation per actor per cluster
+                                print(f"DEBUG: VIOLATION - Actor '{actor}' (character '{character}') scheduled in week {day_week}, only available weeks {available_weeks}")
+                                break
         
         return violations
 
     def _check_actor_required_days(self, sequence: List[int], day_assignments: List[int]) -> int:
-        """FIXED: Check if actors get their required number of shooting days"""
+        """FIXED: Check actor days using n8n cast_mapping"""
         violations = 0
         
-        # Count actual shooting days per actor
-        actor_scheduled_days = defaultdict(int)
+        # Count actual shooting days per character
+        character_scheduled_days = defaultdict(int)
         
         for i, cluster_idx in enumerate(sequence):
             cluster = self.cluster_manager.clusters[cluster_idx]
             start_day = day_assignments[i]
             
-            # DEBUG: Print cluster actors
-            print(f"DEBUG: Cluster {i} at location '{cluster.location}' has actors: {cluster.required_actors}")
-            
-            # Count days for each actor in this cluster
-            for actor in cluster.required_actors:
+            # Count days for each character in this cluster
+            for character in cluster.required_actors:
                 for day_offset in range(cluster.estimated_days):
                     day_idx = start_day + day_offset
                     if day_idx < len(self.calendar.shooting_days):
-                        actor_scheduled_days[actor] += 1
+                        character_scheduled_days[character] += 1
         
-        # DEBUG: Print all scheduled actors
-        print(f"DEBUG: All actors with scheduled days: {dict(actor_scheduled_days)}")
-        print(f"DEBUG: Actors needing specific days: {dict(self.actor_required_days)}")
+        print(f"DEBUG: Characters with scheduled days: {dict(character_scheduled_days)}")
         
-        # Check against required days
+        # Check against required days (actor constraints)
         for actor, required_days in self.actor_required_days.items():
-            scheduled_days = actor_scheduled_days.get(actor, 0)
+            # Find character(s) this actor plays
+            characters_for_actor = [char for char, mapped_actor in self.cast_mapping.items() 
+                                if mapped_actor == actor]
             
-            if scheduled_days != required_days:
+            total_scheduled_days = 0
+            for character in characters_for_actor:
+                total_scheduled_days += character_scheduled_days.get(character, 0)
+            
+            if total_scheduled_days != required_days:
                 violations += 1
-                print(f"DEBUG: VIOLATION - {actor} scheduled {scheduled_days} days, needs {required_days}")
-                
-                # Additional debug: Check if actor appears in any scene at all
-                actor_in_scenes = []
-                for cluster in self.cluster_manager.clusters:
-                    for scene in cluster.scenes:
-                        cast = scene.get('Cast', [])
-                        if isinstance(cast, list) and actor in cast:
-                            actor_in_scenes.append(scene.get('Scene_Number'))
-                        elif isinstance(cast, str) and actor in cast:
-                            actor_in_scenes.append(scene.get('Scene_Number'))
-                
-                if not actor_in_scenes:
-                    print(f"DEBUG: ISSUE - {actor} not found in any scene's Cast field!")
-                else:
-                    print(f"DEBUG: {actor} appears in scenes: {actor_in_scenes}")
+                print(f"DEBUG: VIOLATION - Actor '{actor}' (characters {characters_for_actor}) scheduled {total_scheduled_days} days, needs {required_days}")
+            else:
+                print(f"DEBUG: OK - Actor '{actor}' (characters {characters_for_actor}) scheduled {total_scheduled_days} days, needs {required_days}")
         
         return violations
 
-    def _get_shooting_week_from_day(self, day_index: int) -> int:
-        """NEW: Convert shooting day index to week number (1-based)"""
-        if day_index < 0:
-            return 1
+    def _get_actor_for_character(self, character_name: str) -> Optional[str]:
+        """NEW: Get actor name from character name using n8n cast_mapping"""
+        actor_name = self.cast_mapping.get(character_name)
+        if actor_name:
+            print(f"DEBUG: Character '{character_name}' maps to actor '{actor_name}'")
+            return actor_name
         
-        # Assuming 6-day weeks (Mon-Sat), with Sundays off
-        # Week 1 = days 0-5, Week 2 = days 6-11, etc.
-        return (day_index // 6) + 1
+        print(f"DEBUG: No actor mapping found for character '{character_name}'")
+        return None
 
     def _count_location_splits(self, sequence: List[int], day_assignments: List[int]) -> int:
         """Count how many locations are split across multiple non-consecutive days"""
@@ -1203,6 +1215,7 @@ class ScheduleOptimizer:
     """Main orchestrator for location-first optimization"""
     
     def __init__(self, request: ScheduleRequest):
+        """Initialize optimizer - WITH CAST MAPPING EXTRACTION"""
         self.stripboard = request.stripboard
         self.constraints_raw = request.constraints
         self.params = request.ga_params
@@ -1211,9 +1224,10 @@ class ScheduleOptimizer:
         self.parser = StructuredConstraintParser()
         self.constraints = self.parser.parse_all_constraints(self.constraints_raw)
         
+        # NEW: Extract cast_mapping from constraints
+        self.cast_mapping = self._extract_cast_mapping()
+        
         # Create location cluster manager
-        # FIXED: Get real scene time estimates and pass to cluster manager
-        # FIXED: Get real scene time estimates and pass to cluster manager
         scene_time_estimates = self._get_scene_time_estimates()
         self.cluster_manager = LocationClusterManager(self.stripboard, scene_time_estimates)
         
@@ -1221,39 +1235,55 @@ class ScheduleOptimizer:
         self.calendar = ShootingCalendar("2025-09-01", "2025-10-31")
         
         print(f"DEBUG: PARSED {len(self.constraints)} CONSTRAINTS")
+        print(f"DEBUG: EXTRACTED {len(self.cast_mapping)} CHARACTER-ACTOR MAPPINGS")
         print(f"DEBUG: CREATED {len(self.cluster_manager.clusters)} LOCATION CLUSTERS")
         print(f"DEBUG: CALENDAR HAS {len(self.calendar.shooting_days)} SHOOTING DAYS")
+
+    def _extract_cast_mapping(self) -> Dict[str, str]:
+        """NEW: Extract cast_mapping from parsed constraints"""
+        for constraint in self.constraints:
+            if (constraint.actor_restriction and 
+                'cast_mapping' in constraint.actor_restriction):
+                
+                cast_mapping_data = constraint.actor_restriction['cast_mapping']
+                
+                # Convert n8n format to simple dict
+                cast_mapping = {}
+                for character_name, character_info in cast_mapping_data.items():
+                    actor_name = character_info.get('actor_name')
+                    if actor_name:
+                        cast_mapping[character_name] = actor_name
+                        print(f"DEBUG: Character '{character_name}' → Actor '{actor_name}'")
+                
+                return cast_mapping
+        
+        print(f"DEBUG: No cast_mapping found in constraints")
+        return {}
     
     def optimize(self) -> Dict[str, Any]:
-        """Run location-first optimization - WITH MISSING SCENES IN OUTPUT"""
+        """Run location-first optimization - WITH CAST MAPPING"""
         import time
         start_time = time.time()
         
-        # Run location-first genetic algorithm
-        ga = LocationFirstGA(self.cluster_manager, self.constraints, self.calendar, self.params)
+        # NEW: Pass cast_mapping to GA
+        ga = LocationFirstGA(self.cluster_manager, self.constraints, self.calendar, 
+                            self.params, self.cast_mapping)
         best_individual, best_fitness = ga.evolve()
         
-        # Build final schedule from best individual
+        # Rest unchanged
         final_schedule = self._build_final_schedule(best_individual)
-        
-        # Add summary section
         schedule_summary = self._build_schedule_summary(final_schedule)
-        
-        # Calculate metrics
         metrics = self._calculate_metrics(final_schedule)
-        
-        # NEW: Create missing scenes summary
         missing_scenes_summary = {
             'total_missing_scenes': len(getattr(self, 'missing_scenes_summary', [])),
             'missing_scenes_details': getattr(self, 'missing_scenes_summary', [])
         }
-        
         processing_time = time.time() - start_time
         
         return {
             'schedule': final_schedule,
             'summary': schedule_summary,
-            'missing_scenes': missing_scenes_summary,  # NEW: This will appear in output
+            'missing_scenes': missing_scenes_summary,
             'conflicts': [],
             'metrics': metrics,
             'fitness_score': best_fitness,
