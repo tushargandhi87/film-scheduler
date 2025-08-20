@@ -1094,7 +1094,7 @@ class ScheduleOptimizer:
         }
     
     def _build_final_schedule(self, individual: Dict) -> List[Dict]:
-        """Build final day-by-day schedule from best individual - WITH TIME-BASED DISTRIBUTION"""
+        """Build final day-by-day schedule from best individual - WITH SCENE SPLITTING"""
         schedule = []
         
         sequence = individual['sequence']
@@ -1122,7 +1122,7 @@ class ScheduleOptimizer:
             if not cluster_scenes:
                 continue  # Skip if all scenes already scheduled
             
-            # FIXED: Distribute scenes by TIME, not count
+            # FIXED: Distribute scenes by TIME with SCENE SPLITTING
             shooting_day_idx = actual_start_day
             current_day_scenes = []
             current_day_hours = 0.0
@@ -1145,10 +1145,9 @@ class ScheduleOptimizer:
                 
                 scene_hours = self._get_scene_hours(scene)
                 
-                # Handle scenes longer than daily limit
+                # OPTION C: Handle scenes longer than daily limit with SPLITTING
                 if scene_hours > MAX_DAILY_HOURS:
-                    # Scene is too long for any single day - split it or mark as problem
-                    print(f"WARNING: Scene {scene['Scene_Number']} ({scene_hours:.1f}h) exceeds daily limit ({MAX_DAILY_HOURS}h)")
+                    print(f"INFO: Splitting Scene {scene['Scene_Number']} ({scene_hours:.1f}h) across multiple days")
                     
                     # If we have scenes in current day, finish the day first
                     if current_day_scenes:
@@ -1157,19 +1156,28 @@ class ScheduleOptimizer:
                         current_day_scenes = []
                         current_day_hours = 0.0
                     
-                    # Put the oversized scene alone on its own day
-                    if shooting_day_idx < len(self.calendar.shooting_days):
-                        self._add_schedule_day(schedule, shooting_day_idx, [scene], cluster, scheduled_scenes)
+                    # Split the scene across multiple days
+                    scene_parts = self._split_scene_into_parts(scene, scene_hours, MAX_DAILY_HOURS)
+                    
+                    for part_idx, scene_part in enumerate(scene_parts):
+                        # Check calendar bounds for each part
+                        if shooting_day_idx >= len(self.calendar.shooting_days):
+                            # Track remaining parts as missing
+                            remaining_parts = scene_parts[part_idx:]
+                            for missing_part in remaining_parts:
+                                missing_scenes.append({
+                                    'scene_number': missing_part['Scene_Number'],
+                                    'location_name': missing_part.get('Location_Name', 'Unknown'),
+                                    'reason': 'Calendar overflow - scene parts exceed available shooting days',
+                                    'geographic_location': missing_part.get('Geographic_Location', 'Unknown')
+                                })
+                            break
+                        
+                        # Schedule each part on its own day
+                        self._add_schedule_day(schedule, shooting_day_idx, [scene_part], cluster, scheduled_scenes)
                         shooting_day_idx += 1
-                    else:
-                        # Can't fit anywhere
-                        missing_scenes.append({
-                            'scene_number': scene['Scene_Number'],
-                            'location_name': scene.get('Location_Name', 'Unknown'),
-                            'reason': f'Scene too long ({scene_hours:.1f}h) and no calendar space remaining',
-                            'geographic_location': scene.get('Geographic_Location', 'Unknown')
-                        })
-                    continue
+                    
+                    continue  # Move to next scene
                 
                 # If adding this scene exceeds daily limit, start new day
                 if current_day_hours + scene_hours > MAX_DAILY_HOURS and current_day_scenes:
@@ -1238,7 +1246,13 @@ class ScheduleOptimizer:
         return schedule
 
     def _get_scene_hours(self, scene: Dict) -> float:
-        """Get estimated hours for a single scene"""
+        """Get estimated hours for a single scene - handles both original and split scenes"""
+        
+        # Check if this is a split scene part
+        if 'split_info' in scene and scene['split_info'].get('is_split'):
+            return scene['split_info']['part_hours']
+        
+        # Original scene - get from estimates
         scene_number = scene.get('Scene_Number', '')
         
         # Try to get from scene time estimates
@@ -1249,6 +1263,7 @@ class ScheduleOptimizer:
         else:
             # Fallback to page count estimation
             return self._estimate_scene_hours_from_page_count(scene)
+
 
     def _estimate_scene_hours_from_page_count(self, scene: Dict) -> float:
         """Fallback: Estimate scene hours from page count when real estimates unavailable"""
@@ -1327,6 +1342,50 @@ class ScheduleOptimizer:
             if scene.get('Geographic_Location') == geographic_location:
                 return scene.get('Location_Name', 'Unknown Location')
         return 'Unknown Location'
+
+    def _split_scene_into_parts(self, scene: Dict, total_hours: float, max_daily_hours: float) -> List[Dict]:
+        """Split a complex scene into multiple parts following Option C (Hybrid) approach"""
+        
+        # Calculate how many parts we need
+        total_parts = int((total_hours + max_daily_hours - 0.1) / max_daily_hours)  # Ceiling division
+        
+        # Calculate hours per part
+        hours_per_part = total_hours / total_parts
+        
+        scene_parts = []
+        remaining_hours = total_hours
+        
+        for part_num in range(1, total_parts + 1):
+            # Calculate hours for this part
+            if part_num == total_parts:
+                # Last part gets all remaining hours
+                part_hours = remaining_hours
+            else:
+                # Regular part gets calculated portion, but cap at max_daily_hours
+                part_hours = min(hours_per_part, max_daily_hours)
+            
+            # Create scene part using Option C (Hybrid) approach
+            scene_part = scene.copy()  # Start with original scene data
+            
+            # Option C: Add hybrid fields
+            scene_part['Display_Name'] = f"Scene {scene['Scene_Number']} (Part {part_num} of {total_parts})"
+            scene_part['split_info'] = {
+                'is_split': True,
+                'part': part_num,
+                'total_parts': total_parts,
+                'part_hours': round(part_hours, 1),
+                'original_total_hours': round(total_hours, 1)
+            }
+            
+            scene_parts.append(scene_part)
+            remaining_hours -= part_hours
+        
+        print(f"DEBUG: Split Scene {scene['Scene_Number']} ({total_hours:.1f}h) into {total_parts} parts:")
+        for part in scene_parts:
+            split_info = part['split_info']
+            print(f"  - {part['Display_Name']}: {split_info['part_hours']}h")
+        
+        return scene_parts
 
 
     def _calculate_metrics(self, schedule: List[Dict]) -> Dict[str, Any]:
