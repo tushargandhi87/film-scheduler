@@ -540,7 +540,7 @@ class LocationClusterManager:
 
                 total_hours += scene_hours
         
-            # FIXED: Convert to shooting days using DAILY HOUR LIMITS (8 hours per day)
+            # FIXED: Convert to shooting days using DAILY HOUR LIMITS (10 hours per day)
             MAX_HOURS_PER_DAY = 10.0
             estimated_days = max(1, int((total_hours + MAX_HOURS_PER_DAY - 0.1) / MAX_HOURS_PER_DAY))  # Ceiling division
             
@@ -1094,7 +1094,7 @@ class ScheduleOptimizer:
         }
     
     def _build_final_schedule(self, individual: Dict) -> List[Dict]:
-        """Build final day-by-day schedule from best individual - WITH MISSING SCENES TRACKING"""
+        """Build final day-by-day schedule from best individual - WITH TIME-BASED DISTRIBUTION"""
         schedule = []
         
         sequence = individual['sequence']
@@ -1103,7 +1103,7 @@ class ScheduleOptimizer:
         # Track which scenes have been scheduled to prevent duplicates
         scheduled_scenes = set()
         
-        # NEW: Track missing scenes with reasons
+        # Track missing scenes with reasons
         missing_scenes = []
         
         # Force consecutive scheduling starting from Day 1 (index 0)
@@ -1115,64 +1115,99 @@ class ScheduleOptimizer:
             # Always use consecutive days
             actual_start_day = current_day_idx
             
-            # Distribute cluster scenes across estimated days
+            # Get scenes that haven't been scheduled yet
             cluster_scenes = [scene for scene in cluster.scenes 
                             if scene['Scene_Number'] not in scheduled_scenes]
             
             if not cluster_scenes:
                 continue  # Skip if all scenes already scheduled
             
-            scenes_per_day = max(1, len(cluster_scenes) // cluster.estimated_days)
+            # FIXED: Distribute scenes by TIME, not count
+            shooting_day_idx = actual_start_day
+            current_day_scenes = []
+            current_day_hours = 0.0
+            MAX_DAILY_HOURS = 10.0
             
-            for day_offset in range(cluster.estimated_days):
-                shooting_day_idx = actual_start_day + day_offset
-                
-                # NEW: Check if we exceed calendar and track missing scenes
+            for scene in cluster_scenes:
+                # Check if we exceed calendar bounds
                 if shooting_day_idx >= len(self.calendar.shooting_days):
-                    # Track scenes that exceed calendar bounds
-                    remaining_scenes = cluster_scenes[day_offset * scenes_per_day:]
-                    for scene in remaining_scenes:
-                        if scene['Scene_Number'] not in scheduled_scenes:
+                    # Track remaining scenes as missing
+                    remaining_scenes = cluster_scenes[cluster_scenes.index(scene):]
+                    for missing_scene in remaining_scenes:
+                        if missing_scene['Scene_Number'] not in scheduled_scenes:
                             missing_scenes.append({
-                                'scene_number': scene['Scene_Number'],
-                                'location_name': scene.get('Location_Name', 'Unknown'),
+                                'scene_number': missing_scene['Scene_Number'],
+                                'location_name': missing_scene.get('Location_Name', 'Unknown'),
                                 'reason': 'Calendar overflow - exceeds available shooting days',
-                                'geographic_location': scene.get('Geographic_Location', 'Unknown')
+                                'geographic_location': missing_scene.get('Geographic_Location', 'Unknown')
                             })
                     break
+                
+                scene_hours = self._get_scene_hours(scene)
+                
+                # Handle scenes longer than daily limit
+                if scene_hours > MAX_DAILY_HOURS:
+                    # Scene is too long for any single day - split it or mark as problem
+                    print(f"WARNING: Scene {scene['Scene_Number']} ({scene_hours:.1f}h) exceeds daily limit ({MAX_DAILY_HOURS}h)")
                     
-                shooting_date = self.calendar.shooting_days[shooting_day_idx]
-                
-                # Get scenes for this specific day
-                start_scene_idx = day_offset * scenes_per_day
-                end_scene_idx = start_scene_idx + scenes_per_day
-                
-                # Last day gets remaining scenes
-                if day_offset == cluster.estimated_days - 1:
-                    end_scene_idx = len(cluster_scenes)
-                
-                daily_scenes = cluster_scenes[start_scene_idx:end_scene_idx]
-                
-                if daily_scenes:  # Only create day if there are scenes
-                    # Mark scenes as scheduled
-                    for scene in daily_scenes:
-                        scheduled_scenes.add(scene['Scene_Number'])
+                    # If we have scenes in current day, finish the day first
+                    if current_day_scenes:
+                        self._add_schedule_day(schedule, shooting_day_idx, current_day_scenes, cluster, scheduled_scenes)
+                        shooting_day_idx += 1
+                        current_day_scenes = []
+                        current_day_hours = 0.0
                     
-                    schedule.append({
-                        'day': shooting_day_idx + 1,
-                        'date': shooting_date.strftime("%Y-%m-%d"),
-                        'location': cluster.location,
-                        'location_name': self._extract_location_name(cluster.location),
-                        'scenes': daily_scenes,
-                        'scene_count': len(daily_scenes),
-                        'location_moves': 0,  # Single location per day
-                        'estimated_hours': self._calculate_day_hours(daily_scenes)  # Keep existing logic for now
-                    })
+                    # Put the oversized scene alone on its own day
+                    if shooting_day_idx < len(self.calendar.shooting_days):
+                        self._add_schedule_day(schedule, shooting_day_idx, [scene], cluster, scheduled_scenes)
+                        shooting_day_idx += 1
+                    else:
+                        # Can't fit anywhere
+                        missing_scenes.append({
+                            'scene_number': scene['Scene_Number'],
+                            'location_name': scene.get('Location_Name', 'Unknown'),
+                            'reason': f'Scene too long ({scene_hours:.1f}h) and no calendar space remaining',
+                            'geographic_location': scene.get('Geographic_Location', 'Unknown')
+                        })
+                    continue
+                
+                # If adding this scene exceeds daily limit, start new day
+                if current_day_hours + scene_hours > MAX_DAILY_HOURS and current_day_scenes:
+                    # Finish current day
+                    self._add_schedule_day(schedule, shooting_day_idx, current_day_scenes, cluster, scheduled_scenes)
+                    shooting_day_idx += 1
+                    
+                    # Check calendar bounds before starting new day
+                    if shooting_day_idx >= len(self.calendar.shooting_days):
+                        # No more days available
+                        remaining_scenes = cluster_scenes[cluster_scenes.index(scene):]
+                        for missing_scene in remaining_scenes:
+                            if missing_scene['Scene_Number'] not in scheduled_scenes:
+                                missing_scenes.append({
+                                    'scene_number': missing_scene['Scene_Number'],
+                                    'location_name': missing_scene.get('Location_Name', 'Unknown'),
+                                    'reason': 'Calendar overflow - exceeds available shooting days',
+                                    'geographic_location': missing_scene.get('Geographic_Location', 'Unknown')
+                                })
+                        break
+                    
+                    # Start new day
+                    current_day_scenes = [scene]
+                    current_day_hours = scene_hours
+                else:
+                    # Add to current day
+                    current_day_scenes.append(scene)
+                    current_day_hours += scene_hours
             
-            # Always advance by cluster duration (consecutive scheduling)
-            current_day_idx += cluster.estimated_days
+            # Add final day if there are remaining scenes
+            if current_day_scenes and shooting_day_idx < len(self.calendar.shooting_days):
+                self._add_schedule_day(schedule, shooting_day_idx, current_day_scenes, cluster, scheduled_scenes)
+                shooting_day_idx += 1
+            
+            # Update current_day_idx for next cluster (consecutive scheduling)
+            current_day_idx = shooting_day_idx
         
-        # NEW: Check for scenes that were never included in any cluster
+        # Check for scenes that were never included in any cluster
         all_original_scenes = {scene['Scene_Number'] for scene in self.stripboard}
         all_clustered_scenes = set()
         for cluster in self.cluster_manager.clusters:
@@ -1197,10 +1232,93 @@ class ScheduleOptimizer:
                     'geographic_location': geo_location
                 })
         
-        # NEW: Store missing scenes for reporting
+        # Store missing scenes for reporting
         self.missing_scenes_summary = missing_scenes
         
         return schedule
+
+    def _get_scene_hours(self, scene: Dict) -> float:
+        """Get estimated hours for a single scene"""
+        scene_number = scene.get('Scene_Number', '')
+        
+        # Try to get from scene time estimates
+        if str(scene_number) in self.cluster_manager.scene_time_estimates:
+            return self.cluster_manager.scene_time_estimates[str(scene_number)]
+        elif scene_number in self.cluster_manager.scene_time_estimates:
+            return self.cluster_manager.scene_time_estimates[scene_number]
+        else:
+            # Fallback to page count estimation
+            return self._estimate_scene_hours_from_page_count(scene)
+
+    def _estimate_scene_hours_from_page_count(self, scene: Dict) -> float:
+        """Fallback: Estimate scene hours from page count when real estimates unavailable"""
+        page_count = scene.get('Page_Count', '1')
+        
+        # Parse page count
+        if isinstance(page_count, str):
+            time_multiplier = self._parse_page_count(page_count)
+        else:
+            time_multiplier = 1.0
+        
+        base_hours = 1.0 * time_multiplier  # 1 hour per page as base
+        
+        # Adjust based on scene characteristics
+        cast = scene.get('Cast', [])
+        cast_size = len(cast) if isinstance(cast, list) else 1
+        if cast_size > 3:
+            base_hours *= 1.5  # More cast = more time
+        
+        # Adjust based on INT/EXT
+        if scene.get('INT_EXT') == 'EXT':
+            base_hours *= 1.3  # Exterior scenes take longer
+        
+        return base_hours
+
+    def _parse_page_count(self, page_count_str: str) -> float:
+        """Parse page count strings like '1 6/8', '3/8', '2 1/8' into decimal multipliers"""
+        try:
+            # Handle formats like "1 6/8", "3/8", "2"
+            if '/' in page_count_str:
+                parts = page_count_str.strip().split()
+                if len(parts) == 2:  # "1 6/8"
+                    whole = int(parts[0])
+                    frac_parts = parts[1].split('/')
+                    fraction = int(frac_parts[0]) / int(frac_parts[1])
+                    return whole + fraction
+                else:  # "6/8"
+                    frac_parts = page_count_str.split('/')
+                    return int(frac_parts[0]) / int(frac_parts[1])
+            else:  # "2"
+                return float(page_count_str.strip())
+        except:
+            return 1.0  # Default if parsing fails
+
+    def _add_schedule_day(self, schedule: List[Dict], shooting_day_idx: int, 
+                        daily_scenes: List[Dict], cluster: 'LocationCluster', 
+                        scheduled_scenes: set):
+        """Helper method to add a day to the schedule"""
+        if shooting_day_idx >= len(self.calendar.shooting_days):
+            return  # Can't add day beyond calendar
+        
+        shooting_date = self.calendar.shooting_days[shooting_day_idx]
+        
+        # Mark scenes as scheduled
+        for scene in daily_scenes:
+            scheduled_scenes.add(scene['Scene_Number'])
+        
+        # Calculate actual hours for this day
+        actual_hours = sum(self._get_scene_hours(scene) for scene in daily_scenes)
+        
+        schedule.append({
+            'day': shooting_day_idx + 1,
+            'date': shooting_date.strftime("%Y-%m-%d"),
+            'location': cluster.location,
+            'location_name': self._extract_location_name(cluster.location),
+            'scenes': daily_scenes,
+            'scene_count': len(daily_scenes),
+            'location_moves': 0,  # Single location per day
+            'estimated_hours': round(actual_hours, 1)
+        })
 
     def _extract_location_name(self, geographic_location: str) -> str:
         """Extract location name from geographic address"""
