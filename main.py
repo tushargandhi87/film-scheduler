@@ -1166,7 +1166,7 @@ class ScheduleOptimizer:
                         'scenes': daily_scenes,
                         'scene_count': len(daily_scenes),
                         'location_moves': 0,  # Single location per day
-                        'estimated_hours': len(daily_scenes) * 1.5  # Keep existing logic for now
+                        'estimated_hours': self._calculate_day_hours(daily_scenes)  # Keep existing logic for now
                     })
             
             # Always advance by cluster duration (consecutive scheduling)
