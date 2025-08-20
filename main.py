@@ -515,52 +515,41 @@ class LocationClusterManager:
             print(f"  Cluster {i}: {cluster.location} - {len(cluster.scenes)} scenes, {cluster.estimated_days} days, {cluster.total_hours:.1f} hours")
     
     def _create_location_clusters(self) -> List[LocationCluster]:
-        """Group scenes by geographic location with REAL scene time estimation"""
+        """Group scenes by geographic location with REAL time estimation - REDUCED LOGGING"""
         location_groups = defaultdict(list)
-    
+
         for scene in self.stripboard:
             location = scene.get('Geographic_Location', 'Unknown Location')
             # Skip "Location TBD" or empty locations
             if location and location != 'Location TBD':
                 location_groups[location].append(scene)
-    
+
         clusters = []
         for location, scenes in location_groups.items():
-            # FIXED: Use REAL scene time estimates instead of page count math
+            # Use REAL scene time estimates
             total_hours = 0.0
             for scene in scenes:
-                '''scene_number = str(scene.get('Scene_Number', ''))
-                
-                # Get real time estimate or use fallback
-                if scene_number in self.scene_time_estimates:
-                    scene_hours = self.scene_time_estimates[scene_number]
-                    print(f"DEBUG: Scene {scene_number} - {scene_hours} hours (from estimates)")
-                else:
-                    # Fallback to page count estimation only if no real estimate
-                    scene_hours = self._estimate_scene_hours_from_page_count(scene)
-                    print(f"DEBUG: Scene {scene_number} - {scene_hours} hours (fallback from page count)")
-                '''
                 scene_number = scene.get('Scene_Number', '')
 
                 # Get real time estimate or use fallback - try multiple formats
                 if str(scene_number) in self.scene_time_estimates:
                     scene_hours = self.scene_time_estimates[str(scene_number)]
-                    print(f"DEBUG: Scene {scene_number} - {scene_hours} hours (from estimates)")
+                    # REMOVED: Debug print for every scene
                 elif scene_number in self.scene_time_estimates:
                     scene_hours = self.scene_time_estimates[scene_number]
-                    print(f"DEBUG: Scene {scene_number} - {scene_hours} hours (from estimates)")
+                    # REMOVED: Debug print for every scene
                 else:
-                    # Fallback to page count estimation only if no real estimate
+                    # Fallback to page count estimation
                     scene_hours = self._estimate_scene_hours_from_page_count(scene)
-                    print(f"DEBUG: Scene {scene_number} - {scene_hours} hours (fallback from page count)")
+                    # REMOVED: Debug print for every scene
 
                 total_hours += scene_hours
         
-            # FIXED: Convert to shooting days using DAILY HOUR LIMITS (10 hours per day)
+            # Convert to shooting days using DAILY HOUR LIMITS (10 hours per day)
             MAX_HOURS_PER_DAY = 10.0
-            estimated_days = max(1, int((total_hours + MAX_HOURS_PER_DAY - 0.1) / MAX_HOURS_PER_DAY))  # Ceiling division
+            estimated_days = max(1, int((total_hours + MAX_HOURS_PER_DAY - 0.1) / MAX_HOURS_PER_DAY))
             
-            # CONSTRAINT: Still limit clusters to reasonable sizes (max 4 days per location)
+            # Still limit clusters to reasonable sizes (max 4 days per location)
             estimated_days = min(estimated_days, 4)
         
             # Extract unique actors
@@ -575,13 +564,16 @@ class LocationClusterManager:
             clusters.append(LocationCluster(
                 location=location,
                 scenes=scenes,
-                total_hours=total_hours,  # FIXED: Use proper field name
+                total_hours=total_hours,
                 estimated_days=estimated_days,
                 required_actors=list(all_actors)
             ))
-    
+
         # Sort clusters by total hours (larger first for better scheduling)
         clusters.sort(key=lambda x: x.total_hours, reverse=True)
+        
+        # SINGLE summary log instead of per-cluster logging
+        print(f"DEBUG: Created {len(clusters)} location clusters using REAL time estimates")
         return clusters
     
     def _estimate_scene_hours_from_page_count(self, scene: Dict) -> float:
@@ -784,18 +776,18 @@ class LocationFirstGA:
         }
     
     def fitness(self, individual: Dict) -> float:
-        """Calculate fitness using graduated penalty system - MINIMAL LOGGING"""
+        """Calculate fitness using graduated penalty system - PERFORMANCE OPTIMIZED"""
         score = 0.0
         
         sequence = individual['sequence']
         day_assignments = individual['day_assignments']
         
-        # 1. ENHANCED: Actor constraint violations (Step 2.5a)
+        # 1. Actor constraint violations (Step 2.5a) - NO LOGGING
         actor_violations = self._check_complete_actor_violations(sequence, day_assignments)
         actor_penalty = PENALTY_HARD_CONSTRAINT * actor_violations
         score += actor_penalty
         
-        # 2. EXISTING: Other penalties (unchanged for now)
+        # 2. Other penalties (unchanged for now)
         location_splits = self._count_location_splits(sequence, day_assignments)
         score += PENALTY_LOCATION_SPLIT * location_splits
         
@@ -811,9 +803,7 @@ class LocationFirstGA:
         soft_bonus = self._calculate_soft_bonus(sequence, day_assignments)
         score += soft_bonus
         
-        # REMOVED: Debug print that runs thousands of times
-        # Only log if violations found (rare)
-        
+        # REMOVED: All debug prints that run thousands of times
         return score
 
     
@@ -894,8 +884,9 @@ class LocationFirstGA:
         return (day_index // 6) + 1
 
     def _check_actor_unavailable_dates(self, sequence: List[int], day_assignments: List[int]) -> int:
-        """Check unavailable dates using n8n cast_mapping - REDUCED LOGGING"""
+        """Check unavailable dates using n8n cast_mapping - MINIMAL LOGGING"""
         violations = 0
+        first_violation_logged = False  # NEW: Only log first violation
         
         for i, cluster_idx in enumerate(sequence):
             cluster = self.cluster_manager.clusters[cluster_idx]
@@ -920,17 +911,19 @@ class LocationFirstGA:
                                 unavailable_date = datetime.strptime(unavailable_date_str, "%Y-%m-%d").date()
                                 if shooting_date == unavailable_date:
                                     violations += 1
-                                    # REDUCED: Only log first violation to avoid spam
-                                    if violations == 1:
-                                        print(f"DEBUG: Actor date violations detected (showing first): {actor} unavailable {shooting_date}")
+                                    # REDUCED: Only log first violation per run to avoid spam
+                                    if not first_violation_logged:
+                                        print(f"DEBUG: First actor date violation: {actor} unavailable {shooting_date}")
+                                        first_violation_logged = True
                             except:
                                 pass
         
         return violations    
 
     def _check_actor_available_weeks(self, sequence: List[int], day_assignments: List[int]) -> int:
-        """Check available weeks using n8n cast_mapping - REDUCED LOGGING"""
+        """Check available weeks using n8n cast_mapping - MINIMAL LOGGING"""
         violations = 0
+        first_violation_logged = False  # NEW: Only log first violation
         
         for i, cluster_idx in enumerate(sequence):
             cluster = self.cluster_manager.clusters[cluster_idx]
@@ -952,14 +945,15 @@ class LocationFirstGA:
                             if day_week not in available_weeks:
                                 violations += 1
                                 # REDUCED: Only log first violation per run to avoid spam
-                                if violations == 1:
-                                    print(f"DEBUG: Actor week violations detected (showing first): {actor} in week {day_week}, needs {available_weeks}")
+                                if not first_violation_logged:
+                                    print(f"DEBUG: First actor week violation: {actor} in week {day_week}, needs {available_weeks}")
+                                    first_violation_logged = True
                                 break
         
         return violations
 
     def _check_actor_required_days(self, sequence: List[int], day_assignments: List[int]) -> int:
-        """FIXED: Check actor days using n8n cast_mapping"""
+        """Check actor days using n8n cast_mapping - REDUCED LOGGING"""
         violations = 0
         
         # Count actual shooting days per character
@@ -976,9 +970,9 @@ class LocationFirstGA:
                     if day_idx < len(self.calendar.shooting_days):
                         character_scheduled_days[character] += 1
         
-        print(f"DEBUG: Characters with scheduled days: {dict(character_scheduled_days)}")
+        # REMOVED: Excessive debug logging of all character scheduled days
         
-        # Check against required days (actor constraints)
+        # Check against required days (actor constraints) - ONLY LOG VIOLATIONS
         for actor, required_days in self.actor_required_days.items():
             # Find character(s) this actor plays
             characters_for_actor = [char for char, mapped_actor in self.cast_mapping.items() 
@@ -990,17 +984,16 @@ class LocationFirstGA:
             
             if total_scheduled_days != required_days:
                 violations += 1
-                print(f"DEBUG: VIOLATION - Actor '{actor}' (characters {characters_for_actor}) scheduled {total_scheduled_days} days, needs {required_days}")
-            else:
-                print(f"DEBUG: OK - Actor '{actor}' (characters {characters_for_actor}) scheduled {total_scheduled_days} days, needs {required_days}")
+                # ONLY LOG ACTUAL VIOLATIONS (not success cases)
+                print(f"DEBUG: VIOLATION - Actor '{actor}' scheduled {total_scheduled_days} days, needs {required_days}")
         
         return violations
 
     def _get_actor_for_character(self, character_name: str) -> Optional[str]:
-        """Get actor name from character name using n8n cast_mapping - NO SPAM LOGGING"""
-        actor_name = self.cast_mapping.get(character_name)
-        # REMOVED: Debug logging that prints thousands of times
-        return actor_name
+        """Get actor name from character name using n8n cast_mapping - NO LOGGING"""
+        # REMOVED: Debug logging that prints thousands of times during GA
+        return self.cast_mapping.get(character_name)
+
 
     def _count_location_splits(self, sequence: List[int], day_assignments: List[int]) -> int:
         """Count how many locations are split across multiple non-consecutive days"""
@@ -1089,7 +1082,7 @@ class LocationFirstGA:
         return True
     
     def evolve(self) -> Tuple[Dict, float]:
-        """Run genetic algorithm for location-first scheduling - WITH PROGRESS LOGGING"""
+        """Run genetic algorithm for location-first scheduling - OPTIMIZED PROGRESS LOGGING"""
         pop_size = self.params.get('phase1_population', 50)
         generations = self.params.get('phase1_generations', 200)
         
@@ -1113,11 +1106,11 @@ class LocationFirstGA:
                 best_fitness = fitnesses[gen_best_idx]
                 best_individual = population[gen_best_idx].copy()
             
-            # ADDED: Progress logging every 25 generations (not every generation)
-            if gen % 25 == 0 or gen == generations - 1:
+            # OPTIMIZED: Progress logging every 50 generations (not 25)
+            if gen % 50 == 0 or gen == generations - 1:
                 print(f"DEBUG: Generation {gen}, Best fitness: {best_fitness}")
             
-            # Create new population
+            # Create new population (rest unchanged)
             new_population = []
             
             # Elitism - keep best individuals
