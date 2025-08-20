@@ -109,52 +109,41 @@ class StructuredConstraintParser:
         pass
     
     def parse_all_constraints(self, constraints_dict: Dict[str, Any]) -> List[Constraint]:
-        """Parse all structured constraint groups from n8n"""
+        """Parse all structured constraint groups from n8n - NO DEBUG LOGGING"""
         all_constraints = []
         
-        print(f"DEBUG: Starting constraint parsing with keys: {list(constraints_dict.keys())}")
+        # REMOVED: All print statements about constraint parsing progress
         
         try:
             if 'people_constraints' in constraints_dict:
-                print("DEBUG: Parsing people_constraints")
                 people_constraints = self._parse_people_constraints(constraints_dict['people_constraints'])
                 all_constraints.extend(people_constraints)
-                print(f"DEBUG: Added {len(people_constraints)} people constraints")
             
             if 'location_constraints' in constraints_dict:
-                print("DEBUG: Parsing location_constraints")
                 location_constraints = self._parse_location_constraints(constraints_dict['location_constraints'])
                 all_constraints.extend(location_constraints)
-                print(f"DEBUG: Added {len(location_constraints)} location constraints")
             
             if 'technical_constraints' in constraints_dict:
-                print("DEBUG: Parsing technical_constraints")
                 technical_constraints = self._parse_technical_constraints(constraints_dict['technical_constraints'])
                 all_constraints.extend(technical_constraints)
-                print(f"DEBUG: Added {len(technical_constraints)} technical constraints")
             
             if 'creative_constraints' in constraints_dict:
-                print("DEBUG: Parsing creative_constraints")
                 creative_constraints = self._parse_creative_constraints(constraints_dict['creative_constraints'])
                 all_constraints.extend(creative_constraints)
-                print(f"DEBUG: Added {len(creative_constraints)} creative constraints")
             
             if 'operational_data' in constraints_dict:
-                print("DEBUG: Parsing operational_data")
                 operational_constraints = self._parse_operational_data(constraints_dict['operational_data'])
                 all_constraints.extend(operational_constraints)
-                print(f"DEBUG: Added {len(operational_constraints)} operational constraints")
         
         except Exception as e:
-            print(f"DEBUG: Error in constraint parsing: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"ERROR: Constraint parsing failed: {e}")
         
-        print(f"DEBUG: Total constraints parsed: {len(all_constraints)}")
+        # SINGLE summary log only
+        print(f"DEBUG: Parsed {len(all_constraints)} total constraints")
         return all_constraints
     
     def _parse_people_constraints(self, people_data: Dict) -> List[Constraint]:
-        """Parse actor availability constraints - WITH CAST MAPPING EXTRACTION"""
+        """Parse actor availability constraints - NO VERBOSE LOGGING"""
         constraints = []
         
         try:
@@ -164,13 +153,12 @@ class StructuredConstraintParser:
                 if isinstance(actors_data, dict):
                     for actor_name, actor_info in actors_data.items():
                         if not isinstance(actor_info, dict):
-                            print(f"DEBUG: Skipping {actor_name}, not a dict: {type(actor_info)}")
                             continue
                         
                         constraint_level = actor_info.get('constraint_level', 'Hard')
                         constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
                         
-                        # Parse unavailable dates
+                        # Parse unavailable dates (NO DEBUG PRINTS)
                         if actor_info.get('dates'):
                             for date_str in actor_info['dates']:
                                 constraints.append(Constraint(
@@ -184,7 +172,7 @@ class StructuredConstraintParser:
                                     }
                                 ))
                         
-                        # Parse week restrictions
+                        # Parse week restrictions (NO DEBUG PRINTS)
                         if actor_info.get('weeks'):
                             constraints.append(Constraint(
                                 source=ConstraintPriority.ACTOR,
@@ -197,7 +185,7 @@ class StructuredConstraintParser:
                                 }
                             ))
                         
-                        # Parse daily restrictions
+                        # Parse daily restrictions (NO DEBUG PRINTS)
                         if actor_info.get('days') is not None:
                             constraints.append(Constraint(
                                 source=ConstraintPriority.ACTOR,
@@ -210,15 +198,13 @@ class StructuredConstraintParser:
                                 }
                             ))
             
-            # NEW: Store cast_mapping for use by GA
+            # Store cast_mapping (NO DEBUG PRINTS)
             if 'cast_mapping' in people_data:
                 cast_mapping_data = people_data['cast_mapping']
-                print(f"DEBUG: Found cast_mapping with {len(cast_mapping_data)} character mappings")
                 
-                # Store cast_mapping in a special constraint for retrieval
                 constraints.append(Constraint(
                     source=ConstraintPriority.ACTOR,
-                    type=ConstraintType.SOFT,  # Not really a constraint, just data
+                    type=ConstraintType.SOFT,
                     description="Cast mapping data",
                     affected_scenes=[],
                     actor_restriction={
@@ -227,7 +213,7 @@ class StructuredConstraintParser:
                 ))
         
         except Exception as e:
-            print(f"DEBUG: Error parsing people constraints: {e}")
+            print(f"ERROR: People constraints parsing failed: {e}")
         
         return constraints
     
@@ -643,19 +629,15 @@ class LocationFirstGA:
     # Replace these methods in LocationFirstGA class
 
     def _build_constraint_maps(self):
-        """Build efficient lookup structures for constraints - USING N8N CAST MAPPING"""
-        # Actor constraint data structures (unchanged)
+        """Build efficient lookup structures for constraints - NO VERBOSE LOGGING"""
+        # Actor constraint data structures
         self.actor_unavailable_dates = defaultdict(list)
         self.actor_available_weeks = {}
         self.actor_required_days = {}
         self.actor_constraint_types = {}
         self.actor_constraint_levels = {}
         
-        # REMOVED: No more hard-coded mapping
-        # self.actor_to_character_map = {}  # DELETED
-        # self._build_actor_character_mapping()  # DELETED
-        
-        # Other constraint maps (unchanged)
+        # Other constraint maps
         self.director_mandates = {}
         self.location_windows = {}
         
@@ -670,6 +652,10 @@ class LocationFirstGA:
                 self.location_windows[location] = constraint
         
         self._build_travel_times()
+    
+    # SINGLE summary log only
+    print(f"DEBUG: Built constraint maps for {len(self.actor_unavailable_dates)} actors, {len(self.director_mandates)} director mandates")
+
     
     def _build_travel_times(self):
         """Build travel time matrix between locations"""
@@ -832,7 +818,7 @@ class LocationFirstGA:
             print(f"DEBUG: Found {actor_violations} actor constraint violations")
         
     def _map_actor_constraint(self, constraint):
-        """NEW: Map complete actor constraint data from n8n"""
+        """Map complete actor constraint data from n8n - NO DEBUG LOGGING"""
         actor_restriction = constraint.actor_restriction
         actor = actor_restriction.get('actor')
         
@@ -842,22 +828,20 @@ class LocationFirstGA:
         # Store constraint metadata
         self.actor_constraint_levels[actor] = constraint.type.value
         
-        # EXISTING: Unavailable dates (keep working code)
+        # Unavailable dates (NO DEBUG PRINTS)
         unavailable_date = actor_restriction.get('unavailable_date')
         if unavailable_date:
             self.actor_unavailable_dates[actor].append(unavailable_date)
         
-        # NEW: Available weeks
+        # Available weeks (NO DEBUG PRINTS)
         available_weeks = actor_restriction.get('available_weeks')
         if available_weeks:
             self.actor_available_weeks[actor] = available_weeks
-            print(f"DEBUG: Actor {actor} only available weeks: {available_weeks}")
         
-        # NEW: Required days
+        # Required days (NO DEBUG PRINTS)
         required_days = actor_restriction.get('required_days')
         if required_days:
-            self.actor_required_days[actor] = required_days
-            print(f"DEBUG: Actor {actor} needs {required_days} days") 
+            self.actor_required_days[actor] = required_days 
 
     def _check_complete_actor_violations(self, sequence: List[int], day_assignments: List[int]) -> int:
         """EXTENDED: Check ALL actor constraint types from n8n"""
@@ -1082,7 +1066,7 @@ class LocationFirstGA:
         return True
     
     def evolve(self) -> Tuple[Dict, float]:
-        """Run genetic algorithm for location-first scheduling - OPTIMIZED PROGRESS LOGGING"""
+        """Run genetic algorithm with proper fitness tracking - FIXED FORMAT"""
         pop_size = self.params.get('phase1_population', 50)
         generations = self.params.get('phase1_generations', 200)
         
@@ -1090,6 +1074,9 @@ class LocationFirstGA:
         population = [self.create_individual() for _ in range(pop_size)]
         best_individual = None
         best_fitness = -float('inf')
+        
+        # TRACK FITNESS IMPROVEMENT
+        fitness_history = []
         
         print(f"DEBUG: Starting evolution with {pop_size} individuals for {generations} generations")
         
@@ -1102,15 +1089,27 @@ class LocationFirstGA:
             
             # Track best
             gen_best_idx = np.argmax(fitnesses)
-            if fitnesses[gen_best_idx] > best_fitness:
-                best_fitness = fitnesses[gen_best_idx]
+            gen_best_fitness = fitnesses[gen_best_idx]
+            
+            if gen_best_fitness > best_fitness:
+                best_fitness = gen_best_fitness
                 best_individual = population[gen_best_idx].copy()
             
-            # OPTIMIZED: Progress logging every 50 generations (not 25)
-            if gen % 50 == 0 or gen == generations - 1:
-                print(f"DEBUG: Generation {gen}, Best fitness: {best_fitness}")
+            # RECORD FITNESS PROGRESS
+            avg_fitness = sum(fitnesses) / len(fitnesses)
+            fitness_history.append({
+                'generation': gen,
+                'best_fitness': gen_best_fitness,
+                'avg_fitness': avg_fitness,
+                'worst_fitness': min(fitnesses)
+            })
             
-            # Create new population (rest unchanged)
+            # CORRECTED: Progress logging every 50 generations with IMPROVEMENT tracking
+            if gen % 50 == 0 or gen == generations - 1:
+                improvement = gen_best_fitness - fitness_history[0]['best_fitness'] if fitness_history else 0
+                print(f"DEBUG: Gen {gen}, Best: {gen_best_fitness:.0f}, Avg: {avg_fitness:.0f}, Improvement: +{improvement:.0f}")
+            
+            # Create new population
             new_population = []
             
             # Elitism - keep best individuals
@@ -1121,21 +1120,18 @@ class LocationFirstGA:
             
             # Generate rest through selection and reproduction
             while len(new_population) < pop_size:
-                # Tournament selection
                 parent1 = self._tournament_selection(population, fitnesses)
                 parent2 = self._tournament_selection(population, fitnesses)
-                
-                # Crossover
                 child = self._crossover(parent1, parent2)
-                
-                # Mutation
                 child = self._mutate(child)
-                
                 new_population.append(child)
             
             population = new_population[:pop_size]
         
-        print(f"DEBUG: Evolution completed. Best fitness: {best_fitness}")
+        # FINAL SUMMARY
+        total_improvement = best_fitness - fitness_history[0]['best_fitness'] if fitness_history else 0
+        print(f"DEBUG: Evolution completed. Final fitness: {best_fitness:.0f}, Total improvement: +{total_improvement:.0f}")
+        
         return best_individual, best_fitness
     
     def _copy_individual(self, individual: Dict) -> Dict:
@@ -1217,7 +1213,7 @@ class ScheduleOptimizer:
     """Main orchestrator for location-first optimization"""
     
     def __init__(self, request: ScheduleRequest):
-        """Initialize optimizer - WITH CAST MAPPING EXTRACTION"""
+        """Initialize optimizer - MINIMAL LOGGING"""
         self.stripboard = request.stripboard
         self.constraints_raw = request.constraints
         self.params = request.ga_params
@@ -1226,7 +1222,7 @@ class ScheduleOptimizer:
         self.parser = StructuredConstraintParser()
         self.constraints = self.parser.parse_all_constraints(self.constraints_raw)
         
-        # NEW: Extract cast_mapping from constraints
+        # Extract cast_mapping from constraints
         self.cast_mapping = self._extract_cast_mapping()
         
         # Create location cluster manager
@@ -1236,13 +1232,14 @@ class ScheduleOptimizer:
         # Determine shooting calendar
         self.calendar = ShootingCalendar("2025-09-01", "2025-10-31")
         
-        print(f"DEBUG: PARSED {len(self.constraints)} CONSTRAINTS")
-        print(f"DEBUG: EXTRACTED {len(self.cast_mapping)} CHARACTER-ACTOR MAPPINGS")
-        print(f"DEBUG: CREATED {len(self.cluster_manager.clusters)} LOCATION CLUSTERS")
-        print(f"DEBUG: CALENDAR HAS {len(self.calendar.shooting_days)} SHOOTING DAYS")
+        # SINGLE summary log only
+        print(f"DEBUG: Initialized optimizer - {len(self.constraints)} constraints, "
+            f"{len(self.cast_mapping)} cast mappings, "
+            f"{len(self.cluster_manager.clusters)} clusters, "
+            f"{len(self.calendar.shooting_days)} shooting days")
 
     def _extract_cast_mapping(self) -> Dict[str, str]:
-        """NEW: Extract cast_mapping from parsed constraints"""
+        """Extract cast_mapping from parsed constraints - NO VERBOSE LOGGING"""
         for constraint in self.constraints:
             if (constraint.actor_restriction and 
                 'cast_mapping' in constraint.actor_restriction):
@@ -1255,8 +1252,10 @@ class ScheduleOptimizer:
                     actor_name = character_info.get('actor_name')
                     if actor_name:
                         cast_mapping[character_name] = actor_name
-                        print(f"DEBUG: Character '{character_name}' → Actor '{actor_name}'")
+                        # REMOVED: Debug print for every character mapping
                 
+                # SINGLE summary log only
+                print(f"DEBUG: Extracted {len(cast_mapping)} character-actor mappings")
                 return cast_mapping
         
         print(f"DEBUG: No cast_mapping found in constraints")
@@ -1745,94 +1744,50 @@ class ScheduleOptimizer:
         return round(total_hours, 1)
     
     def _get_scene_time_estimates(self) -> Dict[str, float]:
-        """Extract scene time estimates from operational data - WITH DEBUG LOGGING"""
+        """Extract scene time estimates from operational data - NO VERBOSE LOGGING"""
         scene_estimates = {}
         
         try:
-            print(f"DEBUG: constraints_raw top-level keys: {list(self.constraints_raw.keys())}")
-            
-            # Check if operational_data exists
             if 'operational_data' in self.constraints_raw:
                 operational_data = self.constraints_raw['operational_data']
-                print(f"DEBUG: operational_data keys: {list(operational_data.keys())}")
                 
-                # Check time_estimates structure
-                if 'time_estimates' in operational_data:
-                    time_estimates = operational_data['time_estimates']
-                    print(f"DEBUG: time_estimates keys: {list(time_estimates.keys()) if isinstance(time_estimates, dict) else 'Not a dict'}")
+                if ('time_estimates' in operational_data and 
+                    'scene_estimates' in operational_data['time_estimates']):
                     
-                    # Check scene_estimates
-                    if 'scene_estimates' in time_estimates:
-                        scene_estimates_data = time_estimates['scene_estimates']
-                        print(f"DEBUG: scene_estimates_data type: {type(scene_estimates_data)}")
-                        print(f"DEBUG: scene_estimates_data length: {len(scene_estimates_data) if hasattr(scene_estimates_data, '__len__') else 'No length'}")
-                        
-                        if isinstance(scene_estimates_data, list) and len(scene_estimates_data) > 0:
-                            print(f"DEBUG: First scene estimate sample: {scene_estimates_data[0]}")
-                            
-                            '''for scene_est in scene_estimates_data:
-                                if isinstance(scene_est, dict):
-                                    scene_number = scene_est.get('Scene_Number')
-                                    estimated_hours = scene_est.get('Estimated_Time_Hours', 1.5)
-                                    
-                                    if scene_number:
-                                        scene_estimates[str(scene_number)] = float(estimated_hours)
-                                        print(f"DEBUG: Loaded scene {scene_number}: {estimated_hours} hours") '''
-                            for scene_est in scene_estimates_data:
-                                if isinstance(scene_est, dict):
-                                    # FIX 1: Handle Unicode BOM in key names
-                                    scene_number = None
-                                    estimated_hours = 1.5
-                                    
-                                    # Try multiple key variations for scene number
-                                    for key in scene_est.keys():
-                                        if 'Scene_Number' in key:  # Handles both 'Scene_Number' and '\ufeffScene_Number'
-                                            scene_number = scene_est[key]
-                                            break
-                                    
-                                    # Try multiple key variations for estimated hours
-                                    for key in scene_est.keys():
-                                        if 'Estimated_Time_Hours' in key:
-                                            estimated_hours = scene_est[key]
-                                            break
-                                    
-                                    if scene_number:
-                                        try:
-                                            # FIX 2: Convert string to float
-                                            hours_float = float(estimated_hours) if estimated_hours else 1.5
-                                            scene_estimates[str(scene_number)] = hours_float
-                                            print(f"DEBUG: Loaded scene {scene_number}: {hours_float} hours")
-                                        except (ValueError, TypeError):
-                                            print(f"DEBUG: Failed to convert hours for scene {scene_number}: {estimated_hours}")
-                                            scene_estimates[str(scene_number)] = 1.5                                        
-                        else:
-                            print(f"DEBUG: scene_estimates_data is empty or not a list")
-                    else:
-                        print(f"DEBUG: 'scene_estimates' key not found in time_estimates")
-                else:
-                    print(f"DEBUG: 'time_estimates' key not found in operational_data")
-            else:
-                print(f"DEBUG: 'operational_data' key not found in constraints_raw")
-                
-                # ALTERNATIVE PATH: Check if scene estimates are elsewhere in the structure
-                print(f"DEBUG: Searching for scene estimates in alternative locations...")
-                
-                # Check if scene estimates are directly in constraints
-                for key, value in self.constraints_raw.items():
-                    if isinstance(value, dict):
-                        print(f"DEBUG: Checking {key}: {list(value.keys()) if isinstance(value, dict) else type(value)}")
-                        
-                        # Look for scenes or time estimates in any top-level constraint group
-                        if 'scenes' in value or 'time_estimates' in value or 'scene_estimates' in value:
-                            print(f"DEBUG: Found potential scene data in {key}")
+                    scene_estimates_data = operational_data['time_estimates']['scene_estimates']
+                    
+                    if isinstance(scene_estimates_data, list):
+                        for scene_est in scene_estimates_data:
+                            if isinstance(scene_est, dict):
+                                scene_number = None
+                                estimated_hours = 1.5
+                                
+                                # Try multiple key variations for scene number
+                                for key in scene_est.keys():
+                                    if 'Scene_Number' in key:
+                                        scene_number = scene_est[key]
+                                        break
+                                
+                                # Try multiple key variations for estimated hours
+                                for key in scene_est.keys():
+                                    if 'Estimated_Time_Hours' in key:
+                                        estimated_hours = scene_est[key]
+                                        break
+                                
+                                if scene_number:
+                                    try:
+                                        hours_float = float(estimated_hours) if estimated_hours else 1.5
+                                        scene_estimates[str(scene_number)] = hours_float
+                                        # REMOVED: Debug print for every scene
+                                    except (ValueError, TypeError):
+                                        scene_estimates[str(scene_number)] = 1.5
             
-            print(f"DEBUG: Final loaded scene estimates count: {len(scene_estimates)}")
+            # SINGLE summary log only
+            print(f"DEBUG: Loaded {len(scene_estimates)} scene time estimates")
             
         except Exception as e:
-            print(f"DEBUG: Error in scene estimates extraction: {e}")
-            import traceback
-            traceback.print_exc()
-        
+            print(f"ERROR: Scene estimates extraction failed: {e}")
+    
         return scene_estimates
 
     def _calculate_geographic_moves(self, schedule: List[Dict]) -> int:
