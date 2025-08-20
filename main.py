@@ -73,7 +73,7 @@ class LocationCluster:
     """Group of scenes at the same geographic location"""
     location: str
     scenes: List[Dict]
-    total_pages: float
+    total_hours: float  # RENAMED: Now clearly represents total estimated hours
     estimated_days: int
     required_actors: List[str]
 
@@ -491,7 +491,7 @@ class LocationClusterManager:
     
     def __init__(self, stripboard: List[Dict], scene_time_estimates: Dict[str, float]):
         self.stripboard = stripboard
-        self.scene_time_estimates = scene_time_estimates  # NEW: Real time estimates
+        self.scene_time_estimates = scene_time_estimates or {}   # NEW: Real time estimates # Handle None case
         self.clusters = self._create_location_clusters()
         
         print(f"DEBUG: Created {len(self.clusters)} location clusters using REAL time estimates")
@@ -513,7 +513,7 @@ class LocationClusterManager:
             # FIXED: Use REAL scene time estimates instead of page count math
             total_hours = 0.0
             for scene in scenes:
-                scene_number = str(scene.get('Scene_Number', ''))
+                '''scene_number = str(scene.get('Scene_Number', ''))
                 
                 # Get real time estimate or use fallback
                 if scene_number in self.scene_time_estimates:
@@ -523,11 +523,25 @@ class LocationClusterManager:
                     # Fallback to page count estimation only if no real estimate
                     scene_hours = self._estimate_scene_hours_from_page_count(scene)
                     print(f"DEBUG: Scene {scene_number} - {scene_hours} hours (fallback from page count)")
-                
+                '''
+                scene_number = scene.get('Scene_Number', '')
+
+                # Get real time estimate or use fallback - try multiple formats
+                if str(scene_number) in self.scene_time_estimates:
+                    scene_hours = self.scene_time_estimates[str(scene_number)]
+                    print(f"DEBUG: Scene {scene_number} - {scene_hours} hours (from estimates)")
+                elif scene_number in self.scene_time_estimates:
+                    scene_hours = self.scene_time_estimates[scene_number]
+                    print(f"DEBUG: Scene {scene_number} - {scene_hours} hours (from estimates)")
+                else:
+                    # Fallback to page count estimation only if no real estimate
+                    scene_hours = self._estimate_scene_hours_from_page_count(scene)
+                    print(f"DEBUG: Scene {scene_number} - {scene_hours} hours (fallback from page count)")
+
                 total_hours += scene_hours
         
             # FIXED: Convert to shooting days using DAILY HOUR LIMITS (8 hours per day)
-            MAX_HOURS_PER_DAY = 8.0
+            MAX_HOURS_PER_DAY = 10.0
             estimated_days = max(1, int((total_hours + MAX_HOURS_PER_DAY - 0.1) / MAX_HOURS_PER_DAY))  # Ceiling division
             
             # CONSTRAINT: Still limit clusters to reasonable sizes (max 4 days per location)
@@ -545,13 +559,13 @@ class LocationClusterManager:
             clusters.append(LocationCluster(
                 location=location,
                 scenes=scenes,
-                total_pages=total_hours,  # CHANGED: Now stores total hours, not page-hours
+                total_hours=total_hours,  # FIXED: Use proper field name
                 estimated_days=estimated_days,
                 required_actors=list(all_actors)
             ))
     
         # Sort clusters by total hours (larger first for better scheduling)
-        clusters.sort(key=lambda x: x.total_pages, reverse=True)  # total_pages is now total_hours
+        clusters.sort(key=lambda x: x.total_hours, reverse=True)
         return clusters
     
     def _estimate_scene_hours_from_page_count(self, scene: Dict) -> float:
@@ -595,7 +609,7 @@ class LocationClusterManager:
             else:  # "2"
                 return float(page_count_str.strip())
         except:
-            return 1.0  # Default if parsing fails    
+            return 1.0  # Default if parsing fails
 
 class LocationFirstGA:
     """Location-First Genetic Algorithm for scheduling"""
@@ -1032,6 +1046,7 @@ class ScheduleOptimizer:
         
         # Create location cluster manager
         # FIXED: Get real scene time estimates and pass to cluster manager
+        # FIXED: Get real scene time estimates and pass to cluster manager
         scene_time_estimates = self._get_scene_time_estimates()
         self.cluster_manager = LocationClusterManager(self.stripboard, scene_time_estimates)
         
@@ -1285,29 +1300,66 @@ class ScheduleOptimizer:
         return round(total_hours, 1)
     
     def _get_scene_time_estimates(self) -> Dict[str, float]:
-        """Extract scene time estimates from operational data"""
+        """Extract scene time estimates from operational data - WITH DEBUG LOGGING"""
         scene_estimates = {}
         
         try:
-            # Access: constraints.operational_data.time_estimates.scene_estimates
-            operational_data = self.constraints_raw.get('operational_data', {})
-            time_estimates = operational_data.get('time_estimates', {})
-            scene_estimates_data = time_estimates.get('scene_estimates', [])
+            print(f"DEBUG: constraints_raw top-level keys: {list(self.constraints_raw.keys())}")
             
-            if isinstance(scene_estimates_data, list):
-                for scene_est in scene_estimates_data:
-                    if isinstance(scene_est, dict):
-                        scene_number = scene_est.get('Scene_Number')
-                        estimated_hours = scene_est.get('Estimated_Time_Hours', 1.5)
+            # Check if operational_data exists
+            if 'operational_data' in self.constraints_raw:
+                operational_data = self.constraints_raw['operational_data']
+                print(f"DEBUG: operational_data keys: {list(operational_data.keys())}")
+                
+                # Check time_estimates structure
+                if 'time_estimates' in operational_data:
+                    time_estimates = operational_data['time_estimates']
+                    print(f"DEBUG: time_estimates keys: {list(time_estimates.keys()) if isinstance(time_estimates, dict) else 'Not a dict'}")
+                    
+                    # Check scene_estimates
+                    if 'scene_estimates' in time_estimates:
+                        scene_estimates_data = time_estimates['scene_estimates']
+                        print(f"DEBUG: scene_estimates_data type: {type(scene_estimates_data)}")
+                        print(f"DEBUG: scene_estimates_data length: {len(scene_estimates_data) if hasattr(scene_estimates_data, '__len__') else 'No length'}")
                         
-                        if scene_number:
-                            scene_estimates[str(scene_number)] = float(estimated_hours)
+                        if isinstance(scene_estimates_data, list) and len(scene_estimates_data) > 0:
+                            print(f"DEBUG: First scene estimate sample: {scene_estimates_data[0]}")
+                            
+                            for scene_est in scene_estimates_data:
+                                if isinstance(scene_est, dict):
+                                    scene_number = scene_est.get('Scene_Number')
+                                    estimated_hours = scene_est.get('Estimated_Time_Hours', 1.5)
+                                    
+                                    if scene_number:
+                                        scene_estimates[str(scene_number)] = float(estimated_hours)
+                                        print(f"DEBUG: Loaded scene {scene_number}: {estimated_hours} hours")
+                        else:
+                            print(f"DEBUG: scene_estimates_data is empty or not a list")
+                    else:
+                        print(f"DEBUG: 'scene_estimates' key not found in time_estimates")
+                else:
+                    print(f"DEBUG: 'time_estimates' key not found in operational_data")
+            else:
+                print(f"DEBUG: 'operational_data' key not found in constraints_raw")
+                
+                # ALTERNATIVE PATH: Check if scene estimates are elsewhere in the structure
+                print(f"DEBUG: Searching for scene estimates in alternative locations...")
+                
+                # Check if scene estimates are directly in constraints
+                for key, value in self.constraints_raw.items():
+                    if isinstance(value, dict):
+                        print(f"DEBUG: Checking {key}: {list(value.keys()) if isinstance(value, dict) else type(value)}")
+                        
+                        # Look for scenes or time estimates in any top-level constraint group
+                        if 'scenes' in value or 'time_estimates' in value or 'scene_estimates' in value:
+                            print(f"DEBUG: Found potential scene data in {key}")
             
-            print(f"DEBUG: Loaded {len(scene_estimates)} scene time estimates")
+            print(f"DEBUG: Final loaded scene estimates count: {len(scene_estimates)}")
             
         except Exception as e:
-            print(f"DEBUG: Error loading scene time estimates: {e}")
-            print("DEBUG: Using default 1.5 hours per scene")
+            print(f"DEBUG: Error in scene estimates extraction: {e}")
+            import traceback
+            traceback.print_exc()
         
         return scene_estimates
 
