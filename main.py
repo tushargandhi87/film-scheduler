@@ -1606,7 +1606,7 @@ class ScheduleOptimizer:
                 'efficiency_ratio': 1.0,
                 'avg_locations_per_day': 0,
                 'constraint_satisfaction_rate': 0,
-                'hard_conflicts': 0,  # This was always 0 before
+                'hard_conflicts': 0,
                 'soft_conflicts': 0
             }
         
@@ -1619,10 +1619,10 @@ class ScheduleOptimizer:
         total_moves = sum(day.get('location_moves', 0) for day in schedule)
         n_unique_locations = len(self.cluster_manager.clusters)
         
-        # NEW: Calculate geographic location moves (crew moves between locations)
+        # Calculate geographic location moves (crew moves between locations)
         total_geographic_moves = self._calculate_geographic_moves(schedule)
         
-        # FIXED: Correct theoretical minimum moves
+        # Correct theoretical minimum moves
         theoretical_minimum_moves = max(0, n_unique_locations - 1)
         
         # Calculate efficiency - fewer geographic moves is better
@@ -1642,7 +1642,9 @@ class ScheduleOptimizer:
         avg_locations_per_day = sum(locations_per_day) / len(locations_per_day) if locations_per_day else 0
         
         # FIX: Calculate REAL hard conflicts by recreating the GA's violation detection
+        print(f"DEBUG: Starting metrics hard conflicts calculation...")
         hard_conflicts = self._calculate_real_hard_conflicts_from_schedule(schedule)
+        print(f"DEBUG: Metrics calculated {hard_conflicts} hard conflicts")
         
         # Calculate constraint satisfaction based on actual conflicts
         total_constraints = len(self.constraints)
@@ -1661,65 +1663,77 @@ class ScheduleOptimizer:
             'avg_locations_per_day': round(avg_locations_per_day, 2),
             'constraint_satisfaction_rate': round(satisfaction_rate, 2),
             'hard_conflicts': hard_conflicts,  # NOW REAL VALUES!
-            'soft_conflicts': 0  # Will implement in later steps
+            'soft_conflicts': 0
         }
 
     def _calculate_real_hard_conflicts_from_schedule(self, schedule: List[Dict]) -> int:
-        """NEW: Calculate hard conflicts by converting schedule back to GA format and checking violations"""
+        """Calculate hard conflicts by converting schedule back to GA format and checking violations"""
         try:
+            print(f"DEBUG: Converting schedule with {len(schedule)} days to GA format")
+            
             # Convert schedule back to GA individual format
             sequence, day_assignments = self._schedule_to_ga_format(schedule)
+            print(f"DEBUG: GA format - sequence: {sequence}, assignments: {day_assignments}")
+            
+            if not sequence or not day_assignments:
+                print(f"DEBUG: Empty sequence or assignments - returning 0 conflicts")
+                return 0
+            
+            # Create a temporary GA instance to use violation detection methods
+            temp_ga = LocationFirstGA(self.cluster_manager, self.constraints, self.calendar, 
+                                    self.params, self.cast_mapping)
             
             # Use the same violation detection as fitness function
-            actor_violations = self._check_complete_actor_violations(sequence, day_assignments)
-            
-            # Add other violation types as we implement them in later steps
-            # director_violations = self._check_director_mandate_violations(sequence, day_assignments)
-            # location_violations = self._check_location_availability_violations(sequence, day_assignments)
+            actor_violations = temp_ga._check_complete_actor_violations(sequence, day_assignments)
+            print(f"DEBUG: Actor violations in metrics: {actor_violations}")
             
             total_hard_conflicts = actor_violations
-            print(f"DEBUG: Metrics - Found {total_hard_conflicts} hard conflicts ({actor_violations} actor violations)")
+            print(f"DEBUG: Total hard conflicts for metrics: {total_hard_conflicts}")
             
             return total_hard_conflicts
             
         except Exception as e:
-            print(f"DEBUG: Error calculating real hard conflicts: {e}")
-            return 0    
+            print(f"DEBUG: Exception in _calculate_real_hard_conflicts_from_schedule: {e}")
+            import traceback
+            traceback.print_exc()
+            return 0
+
 
     def _schedule_to_ga_format(self, schedule: List[Dict]) -> Tuple[List[int], List[int]]:
-        """NEW: Convert final schedule back to GA individual format for violation checking"""
-        sequence = []
-        day_assignments = []
-        
-        # Map locations to cluster indices
-        location_to_cluster = {}
-        for i, cluster in enumerate(self.cluster_manager.clusters):
-            location_to_cluster[cluster.location] = i
-        
-        current_cluster_idx = None
-        current_start_day = None
-        
-        for day_idx, day in enumerate(schedule):
-            location = day.get('location', '')
-            cluster_idx = location_to_cluster.get(location)
+        """Convert final schedule back to GA format for violation checking"""
+        try:
+            sequence = []
+            day_assignments = []
             
-            if cluster_idx is not None:
-                if current_cluster_idx != cluster_idx:
-                    # New cluster started
-                    if current_cluster_idx is not None:
-                        # Save previous cluster
-                        sequence.append(current_cluster_idx)
-                        day_assignments.append(current_start_day)
-                    
-                    current_cluster_idx = cluster_idx
-                    current_start_day = day_idx
-        
-        # Add final cluster
-        if current_cluster_idx is not None:
-            sequence.append(current_cluster_idx)
-            day_assignments.append(current_start_day)
-        
-        return sequence, day_assignments
+            print(f"DEBUG: Converting schedule with {len(schedule)} days")
+            
+            # Map locations to cluster indices
+            location_to_cluster = {}
+            for i, cluster in enumerate(self.cluster_manager.clusters):
+                location_to_cluster[cluster.location] = i
+            
+            print(f"DEBUG: Location to cluster mapping: {len(location_to_cluster)} locations")
+            
+            seen_clusters = set()
+            
+            for day_idx, day in enumerate(schedule):
+                location = day.get('location', '')
+                cluster_idx = location_to_cluster.get(location)
+                
+                if cluster_idx is not None and cluster_idx not in seen_clusters:
+                    sequence.append(cluster_idx)
+                    day_assignments.append(day_idx)
+                    seen_clusters.add(cluster_idx)
+                    print(f"DEBUG: Added cluster {cluster_idx} starting day {day_idx} for location '{location}'")
+            
+            print(f"DEBUG: Final sequence: {sequence}, assignments: {day_assignments}")
+            return sequence, day_assignments
+            
+        except Exception as e:
+            print(f"DEBUG: Exception in _schedule_to_ga_format: {e}")
+            import traceback
+            traceback.print_exc()
+            return [], []
 
     def _calculate_day_hours(self, daily_scenes: List[Dict]) -> float:
         """Calculate total estimated hours for a day using real scene time estimates"""
