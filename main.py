@@ -643,9 +643,9 @@ class LocationFirstGA:
         self.cast_mapping = cast_mapping
         print(f"DEBUG: GA received cast_mapping: {self.cast_mapping}")
     
-    # Build constraint maps for efficient lookup
-    self._build_constraint_maps()
-    self._build_travel_times()
+        # Build constraint maps for efficient lookup
+        self._build_constraint_maps()
+        self._build_travel_times()
     
     # STEP 2.5a: COMPLETE ACTOR CONSTRAINTS
     # Replace these methods in LocationFirstGA class
