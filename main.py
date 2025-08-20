@@ -924,7 +924,7 @@ class LocationFirstGA:
         return violations
 
     def _check_actor_required_days(self, sequence: List[int], day_assignments: List[int]) -> int:
-        """NEW: Check if actors get their required number of shooting days"""
+        """FIXED: Check if actors get their required number of shooting days"""
         violations = 0
         
         # Count actual shooting days per actor
@@ -934,12 +934,19 @@ class LocationFirstGA:
             cluster = self.cluster_manager.clusters[cluster_idx]
             start_day = day_assignments[i]
             
+            # DEBUG: Print cluster actors
+            print(f"DEBUG: Cluster {i} at location '{cluster.location}' has actors: {cluster.required_actors}")
+            
             # Count days for each actor in this cluster
             for actor in cluster.required_actors:
                 for day_offset in range(cluster.estimated_days):
                     day_idx = start_day + day_offset
                     if day_idx < len(self.calendar.shooting_days):
                         actor_scheduled_days[actor] += 1
+        
+        # DEBUG: Print all scheduled actors
+        print(f"DEBUG: All actors with scheduled days: {dict(actor_scheduled_days)}")
+        print(f"DEBUG: Actors needing specific days: {dict(self.actor_required_days)}")
         
         # Check against required days
         for actor, required_days in self.actor_required_days.items():
@@ -948,6 +955,21 @@ class LocationFirstGA:
             if scheduled_days != required_days:
                 violations += 1
                 print(f"DEBUG: VIOLATION - {actor} scheduled {scheduled_days} days, needs {required_days}")
+                
+                # Additional debug: Check if actor appears in any scene at all
+                actor_in_scenes = []
+                for cluster in self.cluster_manager.clusters:
+                    for scene in cluster.scenes:
+                        cast = scene.get('Cast', [])
+                        if isinstance(cast, list) and actor in cast:
+                            actor_in_scenes.append(scene.get('Scene_Number'))
+                        elif isinstance(cast, str) and actor in cast:
+                            actor_in_scenes.append(scene.get('Scene_Number'))
+                
+                if not actor_in_scenes:
+                    print(f"DEBUG: ISSUE - {actor} not found in any scene's Cast field!")
+                else:
+                    print(f"DEBUG: {actor} appears in scenes: {actor_in_scenes}")
         
         return violations
 
@@ -1534,18 +1556,18 @@ class ScheduleOptimizer:
 
 
     def _calculate_metrics(self, schedule: List[Dict]) -> Dict[str, Any]:
-        """Calculate metrics including geographic location moves"""
+        """Calculate metrics including REAL hard conflicts from constraint violations"""
         if not schedule:
             return {
                 'total_shooting_days': 0,
                 'total_scenes': 0,
                 'total_location_moves': 0,
-                'total_geographic_moves': 0,  # NEW METRIC
+                'total_geographic_moves': 0,
                 'theoretical_minimum_moves': 0,
                 'efficiency_ratio': 1.0,
                 'avg_locations_per_day': 0,
                 'constraint_satisfaction_rate': 0,
-                'hard_conflicts': 0,
+                'hard_conflicts': 0,  # This was always 0 before
                 'soft_conflicts': 0
             }
         
@@ -1580,30 +1602,85 @@ class ScheduleOptimizer:
         
         avg_locations_per_day = sum(locations_per_day) / len(locations_per_day) if locations_per_day else 0
         
-        # Calculate constraint satisfaction (simplified)
+        # FIX: Calculate REAL hard conflicts by recreating the GA's violation detection
+        hard_conflicts = self._calculate_real_hard_conflicts_from_schedule(schedule)
+        
+        # Calculate constraint satisfaction based on actual conflicts
         total_constraints = len(self.constraints)
-        satisfied_constraints = 0
-        
-        for constraint in self.constraints:
-            if constraint.type == ConstraintType.SOFT:
-                satisfied_constraints += 1
-            elif constraint.type == ConstraintType.HARD:
-                satisfied_constraints += 0.8  # Assume 80% hard constraint satisfaction
-        
-        satisfaction_rate = satisfied_constraints / total_constraints if total_constraints > 0 else 1.0
+        if total_constraints > 0:
+            satisfaction_rate = max(0.0, 1.0 - (hard_conflicts / total_constraints))
+        else:
+            satisfaction_rate = 1.0
         
         return {
             'total_shooting_days': len(schedule),
             'total_scenes': len(unique_scenes),
             'total_location_moves': total_moves,
-            'total_geographic_moves': total_geographic_moves,  # NEW METRIC
+            'total_geographic_moves': total_geographic_moves,
             'theoretical_minimum_moves': theoretical_minimum_moves,
             'efficiency_ratio': round(efficiency_ratio, 3),
             'avg_locations_per_day': round(avg_locations_per_day, 2),
             'constraint_satisfaction_rate': round(satisfaction_rate, 2),
-            'hard_conflicts': 0,
-            'soft_conflicts': 0
+            'hard_conflicts': hard_conflicts,  # NOW REAL VALUES!
+            'soft_conflicts': 0  # Will implement in later steps
         }
+
+    def _calculate_real_hard_conflicts_from_schedule(self, schedule: List[Dict]) -> int:
+        """NEW: Calculate hard conflicts by converting schedule back to GA format and checking violations"""
+        try:
+            # Convert schedule back to GA individual format
+            sequence, day_assignments = self._schedule_to_ga_format(schedule)
+            
+            # Use the same violation detection as fitness function
+            actor_violations = self._check_complete_actor_violations(sequence, day_assignments)
+            
+            # Add other violation types as we implement them in later steps
+            # director_violations = self._check_director_mandate_violations(sequence, day_assignments)
+            # location_violations = self._check_location_availability_violations(sequence, day_assignments)
+            
+            total_hard_conflicts = actor_violations
+            print(f"DEBUG: Metrics - Found {total_hard_conflicts} hard conflicts ({actor_violations} actor violations)")
+            
+            return total_hard_conflicts
+            
+        except Exception as e:
+            print(f"DEBUG: Error calculating real hard conflicts: {e}")
+            return 0    
+
+    def _schedule_to_ga_format(self, schedule: List[Dict]) -> Tuple[List[int], List[int]]:
+        """NEW: Convert final schedule back to GA individual format for violation checking"""
+        sequence = []
+        day_assignments = []
+        
+        # Map locations to cluster indices
+        location_to_cluster = {}
+        for i, cluster in enumerate(self.cluster_manager.clusters):
+            location_to_cluster[cluster.location] = i
+        
+        current_cluster_idx = None
+        current_start_day = None
+        
+        for day_idx, day in enumerate(schedule):
+            location = day.get('location', '')
+            cluster_idx = location_to_cluster.get(location)
+            
+            if cluster_idx is not None:
+                if current_cluster_idx != cluster_idx:
+                    # New cluster started
+                    if current_cluster_idx is not None:
+                        # Save previous cluster
+                        sequence.append(current_cluster_idx)
+                        day_assignments.append(current_start_day)
+                    
+                    current_cluster_idx = cluster_idx
+                    current_start_day = day_idx
+        
+        # Add final cluster
+        if current_cluster_idx is not None:
+            sequence.append(current_cluster_idx)
+            day_assignments.append(current_start_day)
+        
+        return sequence, day_assignments
 
     def _calculate_day_hours(self, daily_scenes: List[Dict]) -> float:
         """Calculate total estimated hours for a day using real scene time estimates"""
