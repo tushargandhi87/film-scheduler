@@ -784,7 +784,7 @@ class LocationFirstGA:
         }
     
     def fitness(self, individual: Dict) -> float:
-        """Calculate fitness using graduated penalty system - WITH STEP 2.5a DEBUG"""
+        """Calculate fitness using graduated penalty system - MINIMAL LOGGING"""
         score = 0.0
         
         sequence = individual['sequence']
@@ -811,9 +811,8 @@ class LocationFirstGA:
         soft_bonus = self._calculate_soft_bonus(sequence, day_assignments)
         score += soft_bonus
         
-        # DEBUG: Print constraint breakdown for Step 2.5a
-        if actor_violations > 0:
-            print(f"DEBUG: Fitness breakdown - Actor violations: {actor_violations}, penalty: {actor_penalty}")
+        # REMOVED: Debug print that runs thousands of times
+        # Only log if violations found (rare)
         
         return score
 
@@ -895,7 +894,7 @@ class LocationFirstGA:
         return (day_index // 6) + 1
 
     def _check_actor_unavailable_dates(self, sequence: List[int], day_assignments: List[int]) -> int:
-        """NEW: Check unavailable dates using n8n cast_mapping"""
+        """Check unavailable dates using n8n cast_mapping - REDUCED LOGGING"""
         violations = 0
         
         for i, cluster_idx in enumerate(sequence):
@@ -921,14 +920,16 @@ class LocationFirstGA:
                                 unavailable_date = datetime.strptime(unavailable_date_str, "%Y-%m-%d").date()
                                 if shooting_date == unavailable_date:
                                     violations += 1
-                                    print(f"DEBUG: VIOLATION - Actor '{actor}' (character '{character}') unavailable on {shooting_date}")
+                                    # REDUCED: Only log first violation to avoid spam
+                                    if violations == 1:
+                                        print(f"DEBUG: Actor date violations detected (showing first): {actor} unavailable {shooting_date}")
                             except:
                                 pass
         
         return violations    
 
     def _check_actor_available_weeks(self, sequence: List[int], day_assignments: List[int]) -> int:
-        """FIXED: Check available weeks using n8n cast_mapping"""
+        """Check available weeks using n8n cast_mapping - REDUCED LOGGING"""
         violations = 0
         
         for i, cluster_idx in enumerate(sequence):
@@ -950,7 +951,9 @@ class LocationFirstGA:
                             
                             if day_week not in available_weeks:
                                 violations += 1
-                                print(f"DEBUG: VIOLATION - Actor '{actor}' (character '{character}') scheduled in week {day_week}, only available weeks {available_weeks}")
+                                # REDUCED: Only log first violation per run to avoid spam
+                                if violations == 1:
+                                    print(f"DEBUG: Actor week violations detected (showing first): {actor} in week {day_week}, needs {available_weeks}")
                                 break
         
         return violations
@@ -994,14 +997,10 @@ class LocationFirstGA:
         return violations
 
     def _get_actor_for_character(self, character_name: str) -> Optional[str]:
-        """NEW: Get actor name from character name using n8n cast_mapping"""
+        """Get actor name from character name using n8n cast_mapping - NO SPAM LOGGING"""
         actor_name = self.cast_mapping.get(character_name)
-        if actor_name:
-            print(f"DEBUG: Character '{character_name}' maps to actor '{actor_name}'")
-            return actor_name
-        
-        print(f"DEBUG: No actor mapping found for character '{character_name}'")
-        return None
+        # REMOVED: Debug logging that prints thousands of times
+        return actor_name
 
     def _count_location_splits(self, sequence: List[int], day_assignments: List[int]) -> int:
         """Count how many locations are split across multiple non-consecutive days"""
@@ -1090,7 +1089,7 @@ class LocationFirstGA:
         return True
     
     def evolve(self) -> Tuple[Dict, float]:
-        """Run genetic algorithm for location-first scheduling"""
+        """Run genetic algorithm for location-first scheduling - WITH PROGRESS LOGGING"""
         pop_size = self.params.get('phase1_population', 50)
         generations = self.params.get('phase1_generations', 200)
         
@@ -1114,7 +1113,8 @@ class LocationFirstGA:
                 best_fitness = fitnesses[gen_best_idx]
                 best_individual = population[gen_best_idx].copy()
             
-            if gen % 50 == 0:
+            # ADDED: Progress logging every 25 generations (not every generation)
+            if gen % 25 == 0 or gen == generations - 1:
                 print(f"DEBUG: Generation {gen}, Best fitness: {best_fitness}")
             
             # Create new population
