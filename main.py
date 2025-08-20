@@ -1325,14 +1325,41 @@ class ScheduleOptimizer:
                         if isinstance(scene_estimates_data, list) and len(scene_estimates_data) > 0:
                             print(f"DEBUG: First scene estimate sample: {scene_estimates_data[0]}")
                             
-                            for scene_est in scene_estimates_data:
+                            '''for scene_est in scene_estimates_data:
                                 if isinstance(scene_est, dict):
                                     scene_number = scene_est.get('Scene_Number')
                                     estimated_hours = scene_est.get('Estimated_Time_Hours', 1.5)
                                     
                                     if scene_number:
                                         scene_estimates[str(scene_number)] = float(estimated_hours)
-                                        print(f"DEBUG: Loaded scene {scene_number}: {estimated_hours} hours")
+                                        print(f"DEBUG: Loaded scene {scene_number}: {estimated_hours} hours") '''
+                            for scene_est in scene_estimates_data:
+                                if isinstance(scene_est, dict):
+                                    # FIX 1: Handle Unicode BOM in key names
+                                    scene_number = None
+                                    estimated_hours = 1.5
+                                    
+                                    # Try multiple key variations for scene number
+                                    for key in scene_est.keys():
+                                        if 'Scene_Number' in key:  # Handles both 'Scene_Number' and '\ufeffScene_Number'
+                                            scene_number = scene_est[key]
+                                            break
+                                    
+                                    # Try multiple key variations for estimated hours
+                                    for key in scene_est.keys():
+                                        if 'Estimated_Time_Hours' in key:
+                                            estimated_hours = scene_est[key]
+                                            break
+                                    
+                                    if scene_number:
+                                        try:
+                                            # FIX 2: Convert string to float
+                                            hours_float = float(estimated_hours) if estimated_hours else 1.5
+                                            scene_estimates[str(scene_number)] = hours_float
+                                            print(f"DEBUG: Loaded scene {scene_number}: {hours_float} hours")
+                                        except (ValueError, TypeError):
+                                            print(f"DEBUG: Failed to convert hours for scene {scene_number}: {estimated_hours}")
+                                            scene_estimates[str(scene_number)] = 1.5                                        
                         else:
                             print(f"DEBUG: scene_estimates_data is empty or not a list")
                     else:
