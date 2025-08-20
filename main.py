@@ -885,6 +885,15 @@ class LocationFirstGA:
         
         return violations           
 
+    def _get_shooting_week_from_day(self, day_index: int) -> int:
+        """NEW: Convert shooting day index to week number (1-based)"""
+        if day_index < 0:
+            return 1
+        
+        # Assuming 6-day weeks (Mon-Sat), with Sundays off
+        # Week 1 = days 0-5, Week 2 = days 6-11, etc.
+        return (day_index // 6) + 1
+
     def _check_actor_unavailable_dates(self, sequence: List[int], day_assignments: List[int]) -> int:
         """NEW: Check unavailable dates using n8n cast_mapping"""
         violations = 0
