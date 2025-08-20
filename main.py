@@ -487,18 +487,19 @@ class ShootingCalendar:
         return None
 
 class LocationClusterManager:
-    """ENHANCED: Manages grouping of scenes by geographic location with better day estimation"""
+    """ENHANCED: Manages grouping of scenes by geographic location with REAL time estimation"""
     
-    def __init__(self, stripboard: List[Dict]):
+    def __init__(self, stripboard: List[Dict], scene_time_estimates: Dict[str, float]):
         self.stripboard = stripboard
+        self.scene_time_estimates = scene_time_estimates  # NEW: Real time estimates
         self.clusters = self._create_location_clusters()
         
-        print(f"DEBUG: Created {len(self.clusters)} location clusters")
+        print(f"DEBUG: Created {len(self.clusters)} location clusters using REAL time estimates")
         for i, cluster in enumerate(self.clusters):
-            print(f"  Cluster {i}: {cluster.location} - {len(cluster.scenes)} scenes, {cluster.estimated_days} days")
+            print(f"  Cluster {i}: {cluster.location} - {len(cluster.scenes)} scenes, {cluster.estimated_days} days, {cluster.total_hours:.1f} hours")
     
     def _create_location_clusters(self) -> List[LocationCluster]:
-        """Group scenes by geographic location with IMPROVED day estimation"""
+        """Group scenes by geographic location with REAL scene time estimation"""
         location_groups = defaultdict(list)
     
         for scene in self.stripboard:
@@ -509,36 +510,28 @@ class LocationClusterManager:
     
         clusters = []
         for location, scenes in location_groups.items():
-            # ENHANCED: Better time estimation based on scene complexity
-            total_minutes = 0
+            # FIXED: Use REAL scene time estimates instead of page count math
+            total_hours = 0.0
             for scene in scenes:
-                # Base time estimation
-                base_time = 60  # 1 hour default
+                scene_number = str(scene.get('Scene_Number', ''))
                 
-                # Adjust based on scene characteristics
-                page_count = scene.get('Page_Count', '1')
-                if isinstance(page_count, str):
-                    # Parse page count like "1 6/8", "3/8", "2 1/8"
-                    time_multiplier = self._parse_page_count(page_count)
-                    base_time *= time_multiplier
+                # Get real time estimate or use fallback
+                if scene_number in self.scene_time_estimates:
+                    scene_hours = self.scene_time_estimates[scene_number]
+                    print(f"DEBUG: Scene {scene_number} - {scene_hours} hours (from estimates)")
+                else:
+                    # Fallback to page count estimation only if no real estimate
+                    scene_hours = self._estimate_scene_hours_from_page_count(scene)
+                    print(f"DEBUG: Scene {scene_number} - {scene_hours} hours (fallback from page count)")
                 
-                # Adjust based on cast size
-                cast = scene.get('Cast', [])
-                cast_size = len(cast) if isinstance(cast, list) else 1
-                if cast_size > 3:
-                    base_time *= 1.5  # More cast = more time
-                
-                # Adjust based on INT/EXT
-                if scene.get('INT_EXT') == 'EXT':
-                    base_time *= 1.3  # Exterior scenes take longer
-                
-                total_minutes += base_time
+                total_hours += scene_hours
         
-            # IMPROVED: Convert to shooting days (6 hours = 360 minutes per day for safety)
-            estimated_days = max(1, int((total_minutes + 180) / 360))  # Round up conservatively
+            # FIXED: Convert to shooting days using DAILY HOUR LIMITS (8 hours per day)
+            MAX_HOURS_PER_DAY = 8.0
+            estimated_days = max(1, int((total_hours + MAX_HOURS_PER_DAY - 0.1) / MAX_HOURS_PER_DAY))  # Ceiling division
             
-            # CONSTRAINT: Limit clusters to reasonable sizes (max 3 days per location)
-            estimated_days = min(estimated_days, 3)
+            # CONSTRAINT: Still limit clusters to reasonable sizes (max 4 days per location)
+            estimated_days = min(estimated_days, 4)
         
             # Extract unique actors
             all_actors = set()
@@ -552,14 +545,38 @@ class LocationClusterManager:
             clusters.append(LocationCluster(
                 location=location,
                 scenes=scenes,
-                total_pages=total_minutes / 60.0,  # Convert to page-hours
+                total_pages=total_hours,  # CHANGED: Now stores total hours, not page-hours
                 estimated_days=estimated_days,
                 required_actors=list(all_actors)
             ))
     
-        # Sort clusters by estimated days (larger first for better scheduling)
-        clusters.sort(key=lambda x: x.estimated_days, reverse=True)
+        # Sort clusters by total hours (larger first for better scheduling)
+        clusters.sort(key=lambda x: x.total_pages, reverse=True)  # total_pages is now total_hours
         return clusters
+    
+    def _estimate_scene_hours_from_page_count(self, scene: Dict) -> float:
+        """Fallback: Estimate scene hours from page count when real estimates unavailable"""
+        page_count = scene.get('Page_Count', '1')
+        
+        # Base time estimation from page count
+        if isinstance(page_count, str):
+            time_multiplier = self._parse_page_count(page_count)
+        else:
+            time_multiplier = 1.0
+        
+        base_hours = 1.0 * time_multiplier  # 1 hour per page as base
+        
+        # Adjust based on scene characteristics (keep existing logic as fallback)
+        cast = scene.get('Cast', [])
+        cast_size = len(cast) if isinstance(cast, list) else 1
+        if cast_size > 3:
+            base_hours *= 1.5  # More cast = more time
+        
+        # Adjust based on INT/EXT
+        if scene.get('INT_EXT') == 'EXT':
+            base_hours *= 1.3  # Exterior scenes take longer
+        
+        return base_hours
     
     def _parse_page_count(self, page_count_str: str) -> float:
         """Parse page count strings like '1 6/8', '3/8', '2 1/8' into decimal multipliers"""
@@ -579,7 +596,6 @@ class LocationClusterManager:
                 return float(page_count_str.strip())
         except:
             return 1.0  # Default if parsing fails    
-    
 
 class LocationFirstGA:
     """Location-First Genetic Algorithm for scheduling"""
@@ -1015,7 +1031,9 @@ class ScheduleOptimizer:
         self.constraints = self.parser.parse_all_constraints(self.constraints_raw)
         
         # Create location cluster manager
-        self.cluster_manager = LocationClusterManager(self.stripboard)
+        # FIXED: Get real scene time estimates and pass to cluster manager
+        scene_time_estimates = self._get_scene_time_estimates()
+        self.cluster_manager = LocationClusterManager(self.stripboard, scene_time_estimates)
         
         # Determine shooting calendar
         self.calendar = ShootingCalendar("2025-09-01", "2025-10-31")
