@@ -107,7 +107,27 @@ class StructuredConstraintParser:
     """Parses structured constraints from n8n AI agents"""
     
     def __init__(self):
-        pass
+        # Initialize parsing diagnostics for error handling and Step C1
+        self.parsing_stats = {
+            'structured_v2_count': 0,
+            'legacy_v1_count': 0, 
+            'legacy_list_count': 0,
+            'fallback_attempts': 0,
+            'fallback_successes': 0,
+            'fallback_failures': 0,
+            'constraint_type_detection': {
+                'shoot_first': 0,
+                'shoot_last': 0,
+                'sequence': 0,
+                'same_day': 0,
+                'location_grouping': 0,
+                'unrecognized': 0
+            },
+            'failed_constraints': []  # Store details of failed constraints
+        }
+    
+    # Initialize constraints list for validation
+    self.constraints = []
     
     def parse_all_constraints(self, constraints_dict: Dict[str, Any]) -> List[Constraint]:
         """Parse all structured constraint groups from n8n - ENHANCED Phase A logging"""
