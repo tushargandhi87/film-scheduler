@@ -333,11 +333,11 @@ class StructuredConstraintParser:
     # Replace this method in StructuredConstraintParser class
 
     def _parse_creative_constraints(self, creative_data: Dict) -> List[Constraint]:
-        """Parse director and DOP constraints - UPDATED for new director structure (Phase A)"""
+        """Parse director and DOP constraints - ENHANCED with comprehensive error handling"""
         constraints = []
         
         try:
-            # NEW: Parse director constraints with updated two-agent structure
+            # Parse director constraints with comprehensive error handling
             if 'director_notes' in creative_data:
                 director_data = creative_data['director_notes']
                 print(f"DEBUG: Director data type: {type(director_data)}")
@@ -349,131 +349,189 @@ class StructuredConstraintParser:
                     
                     if isinstance(director_constraints, list):
                         for i, constraint_info in enumerate(director_constraints):
-                            if isinstance(constraint_info, dict):
-                                # Extract structured data from new format
+                            try:
+                                if not isinstance(constraint_info, dict):
+                                    print(f"WARNING: Skipping non-dict constraint {i}: {type(constraint_info)}")
+                                    continue
+                                
+                                # Track structured parsing
+                                self.parsing_stats['structured_v2_count'] += 1
+                                
+                                # Validate and extract structured data with error handling
                                 constraint_type = constraint_info.get('constraint_type', '')
+                                if not constraint_type:
+                                    print(f"WARNING: Skipping constraint {i} - missing constraint_type")
+                                    continue
+                                
                                 constraint_level = constraint_info.get('constraint_level', 'Hard')
                                 constraint_text = constraint_info.get('constraint_text', '')
                                 related_scenes = constraint_info.get('related_scenes', [])
                                 related_locations = constraint_info.get('related_locations', [])
                                 reasoning = constraint_info.get('reasoning', '')
                                 
-                                print(f"DEBUG: Processing director constraint {i+1}: type='{constraint_type}', "
-                                    f"scenes={related_scenes}, level='{constraint_level}'")
+                                # Validate and clean data types
+                                safe_scenes = self._validate_scene_list(related_scenes, f"constraint {i}")
+                                safe_locations = self._validate_location_list(related_locations, f"constraint {i}")
+                                constraint_type_enum = self._validate_constraint_level(constraint_level)
                                 
-                                # Convert constraint level to enum
-                                constraint_type_enum = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+                                print(f"DEBUG: STRUCTURED constraint {i+1}: type='{constraint_type}', "
+                                    f"scenes={safe_scenes}, level='{constraint_level}'")
                                 
-                                # Create Constraint object with new structured data
-                                constraints.append(Constraint(
+                                # Create constraint safely
+                                constraint = self._create_safe_constraint(
                                     source=ConstraintPriority.DIRECTOR,
-                                    type=constraint_type_enum,
+                                    constraint_type=constraint_type_enum,
                                     description=constraint_text,
-                                    affected_scenes=[str(s) for s in related_scenes],
+                                    affected_scenes=safe_scenes,
                                     date_restriction={
-                                        'constraint_type': constraint_type,  # NEW: Store structured type
-                                        'locations': related_locations,
+                                        'constraint_type': constraint_type,
+                                        'locations': safe_locations,
                                         'reasoning': reasoning,
-                                        'source_format': 'structured_v2'  # Mark as new format
+                                        'source_format': 'structured_v2'
                                     }
-                                ))
-                            else:
-                                print(f"DEBUG: Skipping non-dict constraint item: {type(constraint_info)}")
-                    
-                    print(f"DEBUG: Successfully parsed {len([c for c in constraints if c.source == ConstraintPriority.DIRECTOR])} structured director constraints")
-                
-                # FALLBACK: Handle old format for backward compatibility
-                elif isinstance(director_data, dict) and 'director_constraints' in director_data:
-                    # Check if it's the old format (list of constraints with different structure)
-                    old_director_constraints = director_data['director_constraints']
-                    print(f"DEBUG: Found old format director_constraints")
-                    
-                    if isinstance(old_director_constraints, list):
-                        for constraint_info in old_director_constraints:
-                            if isinstance(constraint_info, dict):
-                                constraint_level = constraint_info.get('constraint_level', 'Hard')
-                                constraint_type_enum = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+                                )
                                 
-                                constraints.append(Constraint(
-                                    source=ConstraintPriority.DIRECTOR,
-                                    type=constraint_type_enum,
-                                    description=constraint_info.get('constraint_text', ''),
-                                    affected_scenes=[str(s) for s in constraint_info.get('related_scenes', [])],
-                                    date_restriction={
-                                        'category': constraint_info.get('category'),
-                                        'locations': constraint_info.get('related_locations', []),
-                                        'source_format': 'legacy_v1'  # Mark as old format
-                                    }
-                                ))
+                                if constraint:
+                                    constraints.append(constraint)
+                            
+                            except Exception as e:
+                                print(f"ERROR: Failed to process structured constraint {i}: {e}")
+                                continue  # Skip this constraint, continue with others
                     
-                    print(f"DEBUG: Processed legacy director constraints format")
-                
-                elif isinstance(director_data, list):
-                    # Handle direct list format (very old format)
-                    print(f"DEBUG: Found very old list format director_constraints")
-                    for constraint_info in director_data:
-                        if isinstance(constraint_info, dict):
-                            constraint_level = constraint_info.get('constraint_level', 'Hard')
-                            constraint_type_enum = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+                    # FALLBACK: Handle old formats with enhanced error handling
+                    elif isinstance(director_data, dict) and 'director_constraints' in director_data:
+                        try:
+                            self.parsing_stats['legacy_v1_count'] += 1
+                            print(f"DEBUG: Using LEGACY V1 format parsing")
                             
-                            constraints.append(Constraint(
-                                source=ConstraintPriority.DIRECTOR,
-                                type=constraint_type_enum,
-                                description=constraint_info.get('constraint_text', ''),
-                                affected_scenes=[str(s) for s in constraint_info.get('related_scenes', [])],
-                                date_restriction={
-                                    'category': constraint_info.get('category'),
-                                    'locations': constraint_info.get('related_locations', []),
-                                    'source_format': 'legacy_list'  # Mark as very old format
-                                }
-                            ))
+                            old_director_constraints = director_data['director_constraints']
+                            if isinstance(old_director_constraints, list):
+                                for j, constraint_info in enumerate(old_director_constraints):
+                                    try:
+                                        if isinstance(constraint_info, dict):
+                                            constraint_level = constraint_info.get('constraint_level', 'Hard')
+                                            constraint_type_enum = self._validate_constraint_level(constraint_level)
+                                            safe_scenes = self._validate_scene_list(
+                                                constraint_info.get('related_scenes', []), f"legacy constraint {j}")
+                                            safe_locations = self._validate_location_list(
+                                                constraint_info.get('related_locations', []), f"legacy constraint {j}")
+                                            
+                                            constraint = self._create_safe_constraint(
+                                                source=ConstraintPriority.DIRECTOR,
+                                                constraint_type=constraint_type_enum,
+                                                description=constraint_info.get('constraint_text', ''),
+                                                affected_scenes=safe_scenes,
+                                                date_restriction={
+                                                    'category': constraint_info.get('category'),
+                                                    'locations': safe_locations,
+                                                    'source_format': 'legacy_v1'
+                                                }
+                                            )
+                                            
+                                            if constraint:
+                                                constraints.append(constraint)
+                                    except Exception as e:
+                                        print(f"ERROR: Failed to process legacy v1 constraint {j}: {e}")
+                                        continue
+                        except Exception as e:
+                            print(f"ERROR: Legacy v1 processing failed: {e}")
+                    
+                    elif isinstance(director_data, list):
+                        try:
+                            self.parsing_stats['legacy_list_count'] += 1
+                            print(f"DEBUG: Using LEGACY LIST format parsing")
+                            
+                            for k, constraint_info in enumerate(director_data):
+                                try:
+                                    if isinstance(constraint_info, dict):
+                                        constraint_level = constraint_info.get('constraint_level', 'Hard')
+                                        constraint_type_enum = self._validate_constraint_level(constraint_level)
+                                        safe_scenes = self._validate_scene_list(
+                                            constraint_info.get('related_scenes', []), f"legacy list constraint {k}")
+                                        safe_locations = self._validate_location_list(
+                                            constraint_info.get('related_locations', []), f"legacy list constraint {k}")
+                                        
+                                        constraint = self._create_safe_constraint(
+                                            source=ConstraintPriority.DIRECTOR,
+                                            constraint_type=constraint_type_enum,
+                                            description=constraint_info.get('constraint_text', ''),
+                                            affected_scenes=safe_scenes,
+                                            date_restriction={
+                                                'category': constraint_info.get('category'),
+                                                'locations': safe_locations,
+                                                'source_format': 'legacy_list'
+                                            }
+                                        )
+                                        
+                                        if constraint:
+                                            constraints.append(constraint)
+                                except Exception as e:
+                                    print(f"ERROR: Failed to process legacy list constraint {k}: {e}")
+                                    continue
+                        except Exception as e:
+                            print(f"ERROR: Legacy list processing failed: {e}")
+                    
+                    else:
+                        print(f"DEBUG: UNRECOGNIZED director_data format: {type(director_data)}")
+                        print(f"DEBUG: Director data keys: {list(director_data.keys()) if isinstance(director_data, dict) else 'Not a dict'}")
                 
                 else:
-                    print(f"DEBUG: Unrecognized director_data format: {type(director_data)}")
-                    print(f"DEBUG: Director data keys: {list(director_data.keys()) if isinstance(director_data, dict) else 'Not a dict'}")
+                    print(f"DEBUG: No 'director_notes' found in creative_data")
             
-            else:
-                print(f"DEBUG: No 'director_notes' found in creative_data")
-            
-            # Parse DOP constraints (UNCHANGED - still works with existing format)
+            # Parse DOP constraints with error handling
             if 'dop_priorities' in creative_data:
-                dop_data = creative_data['dop_priorities']
-                
-                if isinstance(dop_data, dict) and 'dop_priorities' in dop_data:
-                    dop_constraints = dop_data['dop_priorities']
-                elif isinstance(dop_data, list):
-                    dop_constraints = dop_data
-                else:
-                    dop_constraints = []
-                
-                if isinstance(dop_constraints, list):
-                    for constraint_info in dop_constraints:
-                        if isinstance(constraint_info, dict):
-                            constraint_level = constraint_info.get('constraint_level', 'Hard')
-                            constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
-                            
-                            constraints.append(Constraint(
-                                source=ConstraintPriority.DOP,
-                                type=constraint_type,
-                                description=constraint_info.get('constraint_text', ''),
-                                affected_scenes=[str(s) for s in constraint_info.get('related_scenes', [])],
-                                location_restriction={
-                                    'category': constraint_info.get('category'),
-                                    'locations': constraint_info.get('related_locations', [])
-                                }
-                            ))
-                
-                print(f"DEBUG: Processed {len([c for c in constraints if c.source == ConstraintPriority.DOP])} DOP constraints")
+                try:
+                    dop_data = creative_data['dop_priorities']
+                    
+                    if isinstance(dop_data, dict) and 'dop_priorities' in dop_data:
+                        dop_constraints = dop_data['dop_priorities']
+                    elif isinstance(dop_data, list):
+                        dop_constraints = dop_data
+                    else:
+                        dop_constraints = []
+                    
+                    if isinstance(dop_constraints, list):
+                        for m, constraint_info in enumerate(dop_constraints):
+                            try:
+                                if isinstance(constraint_info, dict):
+                                    constraint_level = constraint_info.get('constraint_level', 'Hard')
+                                    constraint_type = self._validate_constraint_level(constraint_level)
+                                    safe_scenes = self._validate_scene_list(
+                                        constraint_info.get('related_scenes', []), f"DOP constraint {m}")
+                                    safe_locations = self._validate_location_list(
+                                        constraint_info.get('related_locations', []), f"DOP constraint {m}")
+                                    
+                                    constraint = self._create_safe_constraint(
+                                        source=ConstraintPriority.DOP,
+                                        constraint_type=constraint_type,
+                                        description=constraint_info.get('constraint_text', ''),
+                                        affected_scenes=safe_scenes,
+                                        location_restriction={
+                                            'category': constraint_info.get('category'),
+                                            'locations': safe_locations
+                                        }
+                                    )
+                                    
+                                    if constraint:
+                                        constraints.append(constraint)
+                            except Exception as e:
+                                print(f"ERROR: Failed to process DOP constraint {m}: {e}")
+                                continue
+                except Exception as e:
+                    print(f"ERROR: DOP constraints processing failed: {e}")
         
         except Exception as e:
             print(f"ERROR: Creative constraints parsing failed: {e}")
             import traceback
             traceback.print_exc()
         
-        # Summary logging
+        # Enhanced summary with parsing method breakdown
         director_count = len([c for c in constraints if c.source == ConstraintPriority.DIRECTOR])
         dop_count = len([c for c in constraints if c.source == ConstraintPriority.DOP])
+        
         print(f"DEBUG: Creative constraints parsed - {director_count} director, {dop_count} DOP constraints")
+        print(f"DEBUG: Parsing method stats - Structured_v2: {self.parsing_stats['structured_v2_count']}, "
+            f"Legacy_v1: {self.parsing_stats['legacy_v1_count']}, Legacy_list: {self.parsing_stats['legacy_list_count']}")
         
         return constraints
     
@@ -543,6 +601,108 @@ class StructuredConstraintParser:
         # Look for individual scene numbers
         scene_numbers = re.findall(r'[Ss]cene\s+(\d+[a-z]?)', text)
         return scene_numbers
+
+    def _validate_scene_list(self, scenes: Any, context: str) -> List[str]:
+        """Safely convert and validate scene number list"""
+        if scenes is None:
+            return []
+        
+        if not isinstance(scenes, list):
+            print(f"WARNING: {context} - converting {type(scenes)} to list")
+            scenes = [scenes] if scenes else []
+        
+        validated_scenes = []
+        for scene in scenes:
+            try:
+                if scene is not None:
+                    scene_str = str(scene).strip()
+                    if scene_str:
+                        validated_scenes.append(scene_str)
+            except Exception as e:
+                print(f"WARNING: {context} - invalid scene number '{scene}': {e}")
+        
+        return validated_scenes
+
+    def _validate_location_list(self, locations: Any, context: str) -> List[str]:
+        """Safely convert and validate location list"""
+        if locations is None:
+            return []
+        
+        if not isinstance(locations, list):
+            print(f"WARNING: {context} - converting locations {type(locations)} to list")
+            locations = [locations] if locations else []
+        
+        validated_locations = []
+        for location in locations:
+            try:
+                if location is not None:
+                    location_str = str(location).strip()
+                    if location_str:
+                        validated_locations.append(location_str)
+            except Exception as e:
+                print(f"WARNING: {context} - invalid location '{location}': {e}")
+        
+        return validated_locations
+
+    def _validate_constraint_level(self, level: Any) -> ConstraintType:
+        """Safely validate and convert constraint level"""
+        if level is None:
+            return ConstraintType.HARD
+        
+        if isinstance(level, ConstraintType):
+            return level
+        
+        try:
+            level_str = str(level).lower().strip()
+            if level_str in ['hard', 'h']:
+                return ConstraintType.HARD
+            elif level_str in ['soft', 's']:
+                return ConstraintType.SOFT
+            else:
+                print(f"WARNING: Unknown constraint level '{level}', defaulting to Hard")
+                return ConstraintType.HARD
+        except Exception as e:
+            print(f"WARNING: Error validating constraint level '{level}': {e}, defaulting to Hard")
+            return ConstraintType.HARD
+
+    def _create_safe_constraint(self, source: ConstraintPriority, constraint_type: ConstraintType, 
+                          description: str, affected_scenes: List[str], 
+                          date_restriction: Optional[Dict] = None,
+                          location_restriction: Optional[Dict] = None,
+                          actor_restriction: Optional[Dict] = None) -> Optional[Constraint]:
+        """Create constraint with validation - returns None if validation fails"""
+        try:
+            # Validate inputs
+            if not isinstance(description, str):
+                print(f"WARNING: Invalid description type: {type(description)}")
+                description = str(description) if description else "Unknown constraint"
+            
+            if not isinstance(affected_scenes, list):
+                print(f"WARNING: Converting affected_scenes to list: {type(affected_scenes)}")
+                affected_scenes = [affected_scenes] if affected_scenes else []
+            
+            # Ensure all scene numbers are strings and valid
+            safe_scenes = []
+            for scene in affected_scenes:
+                try:
+                    if scene is not None and str(scene).strip():
+                        safe_scenes.append(str(scene).strip())
+                except Exception as e:
+                    print(f"WARNING: Invalid scene in affected_scenes '{scene}': {e}")
+            
+            return Constraint(
+                source=source,
+                type=constraint_type,
+                description=description,
+                affected_scenes=safe_scenes,
+                date_restriction=date_restriction,
+                location_restriction=location_restriction,
+                actor_restriction=actor_restriction
+            )
+        
+        except Exception as e:
+            print(f"ERROR: Failed to create constraint: {e}")
+            return None
 
 class ShootingCalendar:
     """Manages shooting dates and availability"""
@@ -715,72 +875,92 @@ class LocationFirstGA:
     # Replace these methods in LocationFirstGA class
 
     def _build_constraint_maps(self):
-        """Build efficient lookup structures for constraints - PHASE B with director mandates"""
-        # Existing actor constraint data structures
-        self.actor_unavailable_dates = defaultdict(list)
-        self.actor_available_weeks = {}
-        self.actor_required_days = {}
-        self.actor_constraint_types = {}
-        self.actor_constraint_levels = {}
-        
-        # NEW: Director mandate data structures (Phase B)
-        self.director_shoot_first = []          # Scene numbers that must be shot early
-        self.director_shoot_last = []           # Scene numbers that must be shot late
-        self.director_sequence_rules = []       # Before/after sequence requirements
-        self.director_same_day_groups = []      # Groups of scenes that must be same day
-        self.director_location_groupings = {}   # Location-specific director requirements
-        self.director_actor_arcs = []           # Actor-specific sequence requirements
-        self.director_mandates_raw = []         # Store all director constraints for debugging
-        
-        # Other existing constraint maps
-        self.location_windows = {}
-        
-        # Track constraint processing methods
-        structured_processed = 0
-        fallback_processed = 0
-        
-        # Process all constraints
-        for constraint in self.constraints:
-            if constraint.actor_restriction:
-                self._map_actor_constraint(constraint)
-            elif constraint.source == ConstraintPriority.DIRECTOR and constraint.affected_scenes:
-                # Track which processing method is used
-                if (constraint.date_restriction and 
-                    constraint.date_restriction.get('source_format') == 'structured_v2'):
-                    structured_processed += 1
-                else:
-                    fallback_processed += 1
+        """Build efficient lookup structures for constraints - WITH COMPREHENSIVE ERROR HANDLING"""
+        # Initialize all data structures with error handling
+        try:
+            self.actor_unavailable_dates = defaultdict(list)
+            self.actor_available_weeks = {}
+            self.actor_required_days = {}
+            self.actor_constraint_types = {}
+            self.actor_constraint_levels = {}
+            
+            # Director mandate data structures
+            self.director_shoot_first = []
+            self.director_shoot_last = []
+            self.director_sequence_rules = []
+            self.director_same_day_groups = []
+            self.director_location_groupings = {}
+            self.director_mandates_raw = []
+            
+            # Other constraint maps
+            self.location_windows = {}
+            
+            # Error tracking
+            constraint_processing_errors = 0
+            constraints_processed = 0
+            structured_processed = 0
+            fallback_processed = 0
+            
+            # Process all constraints with individual error handling
+            for constraint in self.constraints:
+                try:
+                    constraints_processed += 1
+                    
+                    if constraint.actor_restriction:
+                        self._map_actor_constraint(constraint)
+                    elif constraint.source == ConstraintPriority.DIRECTOR and constraint.affected_scenes:
+                        # Track which processing method is used
+                        if (constraint.date_restriction and 
+                            constraint.date_restriction.get('source_format') == 'structured_v2'):
+                            structured_processed += 1
+                        else:
+                            fallback_processed += 1
+                        
+                        self._parse_director_constraint_safe(constraint)
+                    elif constraint.location_restriction and constraint.location_restriction.get('location'):
+                        location = constraint.location_restriction['location']
+                        self.location_windows[location] = constraint
                 
-                self._parse_director_constraint(constraint)  # NEW METHOD
-            elif constraint.location_restriction and constraint.location_restriction.get('location'):
-                location = constraint.location_restriction['location']
-                self.location_windows[location] = constraint
-        
-        self._build_travel_times()
-        
-        # PHASE B: Enhanced summary with processing method breakdown
-        print(f"DEBUG: Built constraint maps - {len(self.actor_unavailable_dates)} actors, "
-            f"{len(self.director_shoot_first)} 'shoot first', "
-            f"{len(self.director_shoot_last)} 'shoot last', "
-            f"{len(self.director_sequence_rules)} sequence rules, "
-            f"{len(self.director_same_day_groups)} same day groups")
-        
-        if structured_processed > 0 or fallback_processed > 0:
-            print(f"DEBUG: Director constraint processing - {structured_processed} structured (direct mapping), "
-                f"{fallback_processed} fallback (keyword detection)")
-        
-        # Detailed constraint breakdown for debugging
-        if self.director_sequence_rules:
-            before_rules = len([r for r in self.director_sequence_rules if r.get('type') == 'before'])
-            after_rules = len([r for r in self.director_sequence_rules if r.get('type') == 'after'])
-            generic_rules = len([r for r in self.director_sequence_rules if r.get('type') == 'sequence'])
-            print(f"DEBUG: Sequence rules breakdown - {before_rules} before, {after_rules} after, {generic_rules} generic")
-        
-        if self.director_same_day_groups:
-            consecutive_groups = len([g for g in self.director_same_day_groups if g.get('type') == 'consecutive'])
-            same_day_groups = len(self.director_same_day_groups) - consecutive_groups
-            print(f"DEBUG: Day grouping breakdown - {same_day_groups} same day, {consecutive_groups} consecutive days")
+                except Exception as e:
+                    constraint_processing_errors += 1
+                    print(f"ERROR: Failed to process constraint: {e}")
+                    print(f"       Constraint: {getattr(constraint, 'description', 'Unknown')}")
+                    continue
+            
+            # Build travel times with error handling
+            try:
+                self._build_travel_times()
+            except Exception as e:
+                print(f"ERROR: Travel times building failed: {e}")
+            
+            # Enhanced summary with processing method breakdown and error reporting
+            print(f"DEBUG: Processed {constraints_processed} constraints with {constraint_processing_errors} errors")
+            print(f"DEBUG: Built constraint maps - {len(self.actor_unavailable_dates)} actors, "
+                f"{len(self.director_shoot_first)} 'shoot first', "
+                f"{len(self.director_shoot_last)} 'shoot last', "
+                f"{len(self.director_sequence_rules)} sequence rules, "
+                f"{len(self.director_same_day_groups)} same day groups")
+            
+            if structured_processed > 0 or fallback_processed > 0:
+                print(f"DEBUG: Director constraint processing - {structured_processed} structured (direct mapping), "
+                    f"{fallback_processed} fallback (keyword detection)")
+            
+            # Detailed constraint breakdown for debugging
+            if self.director_sequence_rules:
+                before_rules = len([r for r in self.director_sequence_rules if r.get('type') == 'before'])
+                after_rules = len([r for r in self.director_sequence_rules if r.get('type') == 'after'])
+                generic_rules = len([r for r in self.director_sequence_rules if r.get('type') == 'sequence'])
+                print(f"DEBUG: Sequence rules breakdown - {before_rules} before, {after_rules} after, {generic_rules} generic")
+            
+            if self.director_same_day_groups:
+                consecutive_groups = len([g for g in self.director_same_day_groups if g.get('type') == 'consecutive'])
+                same_day_groups = len(self.director_same_day_groups) - consecutive_groups
+                print(f"DEBUG: Day grouping breakdown - {same_day_groups} same day, {consecutive_groups} consecutive days")
 
+        except Exception as e:
+            print(f"ERROR: Constraint maps building failed: {e}")
+            import traceback
+            traceback.print_exc()
 
     
     def _build_travel_times(self):
@@ -1368,89 +1548,227 @@ class LocationFirstGA:
         return violations
 
     def _check_shoot_first_violations(self, scene_to_day: Dict[str, int]) -> int:
-        """Check if 'shoot first' scenes are scheduled early"""
+        """Check if 'shoot first' scenes are scheduled early - WITH COMPREHENSIVE ERROR HANDLING"""
         violations = 0
         
-        if not self.director_shoot_first:
+        try:
+            if not self.director_shoot_first:
+                return 0
+            
+            # Validate scene_to_day mapping
+            if not isinstance(scene_to_day, dict):
+                print(f"ERROR: Invalid scene_to_day type: {type(scene_to_day)}")
+                return 0
+            
+            # Find earliest day among mandated scenes with validation
+            earliest_mandated_day = float('inf')
+            valid_mandated_scenes = 0
+            
+            for scene_num in self.director_shoot_first:
+                try:
+                    if scene_num in scene_to_day:
+                        day_value = scene_to_day[scene_num]
+                        if isinstance(day_value, (int, float)) and day_value >= 0:
+                            earliest_mandated_day = min(earliest_mandated_day, day_value)
+                            valid_mandated_scenes += 1
+                        else:
+                            print(f"WARNING: Invalid day value for scene {scene_num}: {day_value}")
+                    else:
+                        print(f"WARNING: Shoot first scene {scene_num} not found in schedule")
+                except Exception as e:
+                    print(f"ERROR: Processing shoot first scene {scene_num}: {e}")
+            
+            if valid_mandated_scenes == 0:
+                print(f"WARNING: No valid shoot first scenes found in schedule")
+                return 0
+            
+            # Count non-mandated scenes scheduled before earliest mandated scene
+            if earliest_mandated_day != float('inf'):
+                for scene_num, day in scene_to_day.items():
+                    try:
+                        if (scene_num not in self.director_shoot_first and 
+                            isinstance(day, (int, float)) and 
+                            day < earliest_mandated_day):
+                            violations += 1
+                    except Exception as e:
+                        print(f"ERROR: Comparing scene {scene_num} day {day}: {e}")
+        
+        except Exception as e:
+            print(f"ERROR: Shoot first violations check failed: {e}")
             return 0
-        
-        # Find earliest day among mandated scenes
-        earliest_mandated_day = float('inf')
-        for scene_num in self.director_shoot_first:
-            if scene_num in scene_to_day:
-                earliest_mandated_day = min(earliest_mandated_day, scene_to_day[scene_num])
-        
-        # Count non-mandated scenes scheduled before earliest mandated scene
-        if earliest_mandated_day != float('inf'):
-            for scene_num, day in scene_to_day.items():
-                if scene_num not in self.director_shoot_first and day < earliest_mandated_day:
-                    violations += 1
         
         return violations
 
     def _check_shoot_last_violations(self, scene_to_day: Dict[str, int]) -> int:
-        """Check if 'shoot last' scenes are scheduled late"""
+        """Check if 'shoot last' scenes are scheduled late - WITH COMPREHENSIVE ERROR HANDLING"""
         violations = 0
         
-        if not self.director_shoot_last:
+        try:
+            if not self.director_shoot_last:
+                return 0
+            
+            # Validate scene_to_day mapping
+            if not isinstance(scene_to_day, dict):
+                print(f"ERROR: Invalid scene_to_day type: {type(scene_to_day)}")
+                return 0
+            
+            # Find latest day among mandated scenes with validation
+            latest_mandated_day = -1
+            valid_mandated_scenes = 0
+            
+            for scene_num in self.director_shoot_last:
+                try:
+                    if scene_num in scene_to_day:
+                        day_value = scene_to_day[scene_num]
+                        if isinstance(day_value, (int, float)) and day_value >= 0:
+                            latest_mandated_day = max(latest_mandated_day, day_value)
+                            valid_mandated_scenes += 1
+                        else:
+                            print(f"WARNING: Invalid day value for scene {scene_num}: {day_value}")
+                    else:
+                        print(f"WARNING: Shoot last scene {scene_num} not found in schedule")
+                except Exception as e:
+                    print(f"ERROR: Processing shoot last scene {scene_num}: {e}")
+            
+            if valid_mandated_scenes == 0:
+                print(f"WARNING: No valid shoot last scenes found in schedule")
+                return 0
+            
+            # Count non-mandated scenes scheduled after latest mandated scene
+            if latest_mandated_day >= 0:
+                for scene_num, day in scene_to_day.items():
+                    try:
+                        if (scene_num not in self.director_shoot_last and 
+                            isinstance(day, (int, float)) and 
+                            day > latest_mandated_day):
+                            violations += 1
+                    except Exception as e:
+                        print(f"ERROR: Comparing scene {scene_num} day {day}: {e}")
+        
+        except Exception as e:
+            print(f"ERROR: Shoot last violations check failed: {e}")
             return 0
-        
-        # Find latest day among mandated scenes
-        latest_mandated_day = -1
-        for scene_num in self.director_shoot_last:
-            if scene_num in scene_to_day:
-                latest_mandated_day = max(latest_mandated_day, scene_to_day[scene_num])
-        
-        # Count non-mandated scenes scheduled after latest mandated scene
-        if latest_mandated_day >= 0:
-            for scene_num, day in scene_to_day.items():
-                if scene_num not in self.director_shoot_last and day > latest_mandated_day:
-                    violations += 1
         
         return violations
 
     def _check_sequence_rule_violations(self, scene_to_day: Dict[str, int]) -> int:
-        """Check sequence rule violations"""
+        """Check sequence rule violations - WITH COMPREHENSIVE ERROR HANDLING"""
         violations = 0
         
-        for rule in self.director_sequence_rules:
-            rule_type = rule.get('type')
+        try:
+            if not isinstance(scene_to_day, dict):
+                print(f"ERROR: Invalid scene_to_day type: {type(scene_to_day)}")
+                return 0
             
-            if rule_type == 'before':
-                first_scene = rule['first_scene']
-                second_scene = rule['second_scene']
+            for rule in self.director_sequence_rules:
+                try:
+                    if not isinstance(rule, dict):
+                        print(f"WARNING: Invalid sequence rule type: {type(rule)}")
+                        continue
+                    
+                    rule_type = rule.get('type')
+                    first_scene = rule.get('first_scene')
+                    second_scene = rule.get('second_scene')
+                    
+                    # Validate rule data
+                    if not all([rule_type, first_scene, second_scene]):
+                        print(f"WARNING: Incomplete sequence rule: {rule}")
+                        continue
+                    
+                    # Convert to strings for consistency
+                    first_scene = str(first_scene).strip()
+                    second_scene = str(second_scene).strip()
+                    
+                    if rule_type == 'before':
+                        if (first_scene in scene_to_day and second_scene in scene_to_day):
+                            try:
+                                first_day = scene_to_day[first_scene]
+                                second_day = scene_to_day[second_scene]
+                                
+                                if (isinstance(first_day, (int, float)) and 
+                                    isinstance(second_day, (int, float)) and
+                                    first_day >= second_day):
+                                    violations += 1
+                            except Exception as e:
+                                print(f"ERROR: Comparing days for scenes {first_scene}, {second_scene}: {e}")
+                    
+                    elif rule_type == 'after':
+                        if (first_scene in scene_to_day and second_scene in scene_to_day):
+                            try:
+                                first_day = scene_to_day[first_scene]
+                                second_day = scene_to_day[second_scene]
+                                
+                                if (isinstance(first_day, (int, float)) and 
+                                    isinstance(second_day, (int, float)) and
+                                    first_day <= second_day):
+                                    violations += 1
+                            except Exception as e:
+                                print(f"ERROR: Comparing days for scenes {first_scene}, {second_scene}: {e}")
+                    
+                    else:
+                        print(f"WARNING: Unknown sequence rule type: {rule_type}")
                 
-                if (first_scene in scene_to_day and second_scene in scene_to_day):
-                    if scene_to_day[first_scene] >= scene_to_day[second_scene]:
-                        violations += 1
-            
-            elif rule_type == 'after':
-                first_scene = rule['first_scene']
-                second_scene = rule['second_scene']
-                
-                if (first_scene in scene_to_day and second_scene in scene_to_day):
-                    if scene_to_day[first_scene] <= scene_to_day[second_scene]:
-                        violations += 1
+                except Exception as e:
+                    print(f"ERROR: Processing sequence rule {rule}: {e}")
+                    continue
+        
+        except Exception as e:
+            print(f"ERROR: Sequence rule violations check failed: {e}")
+            return 0
         
         return violations
 
     def _check_same_day_violations(self, scene_to_day: Dict[str, int]) -> int:
-        """Check same day grouping violations"""
+        """Check same day grouping violations - WITH COMPREHENSIVE ERROR HANDLING"""
         violations = 0
         
-        for group in self.director_same_day_groups:
-            scenes = group['scenes']
+        try:
+            if not isinstance(scene_to_day, dict):
+                print(f"ERROR: Invalid scene_to_day type: {type(scene_to_day)}")
+                return 0
             
-            # Get days for all scenes in group
-            group_days = []
-            for scene_num in scenes:
-                if scene_num in scene_to_day:
-                    group_days.append(scene_to_day[scene_num])
-            
-            # All scenes should be on same day
-            if len(set(group_days)) > 1:
-                violations += len(group_days) - 1  # Penalty proportional to spread
+            for group in self.director_same_day_groups:
+                try:
+                    if not isinstance(group, dict):
+                        print(f"WARNING: Invalid same day group type: {type(group)}")
+                        continue
+                    
+                    scenes = group.get('scenes', [])
+                    if not isinstance(scenes, list):
+                        print(f"WARNING: Invalid scenes list in same day group: {type(scenes)}")
+                        continue
+                    
+                    # Get days for all scenes in group with validation
+                    group_days = []
+                    valid_scenes = []
+                    
+                    for scene_num in scenes:
+                        try:
+                            scene_str = str(scene_num).strip()
+                            if scene_str in scene_to_day:
+                                day_value = scene_to_day[scene_str]
+                                if isinstance(day_value, (int, float)) and day_value >= 0:
+                                    group_days.append(day_value)
+                                    valid_scenes.append(scene_str)
+                                else:
+                                    print(f"WARNING: Invalid day value for scene {scene_str}: {day_value}")
+                            else:
+                                print(f"WARNING: Same day group scene {scene_str} not found in schedule")
+                        except Exception as e:
+                            print(f"ERROR: Processing same day group scene {scene_num}: {e}")
+                    
+                    # Check if scenes are spread across multiple days
+                    if len(valid_scenes) > 1 and len(set(group_days)) > 1:
+                        violations += len(group_days) - 1  # Penalty proportional to spread
+                
+                except Exception as e:
+                    print(f"ERROR: Processing same day group {group}: {e}")
+                    continue
         
+        except Exception as e:
+            print(f"ERROR: Same day violations check failed: {e}")
+            return 0
+    
         return violations
 
     def _check_location_grouping_violations(self, sequence: List[int], day_assignments: List[int]) -> int:
@@ -1479,18 +1797,55 @@ class LocationFirstGA:
 
 
     def _build_scene_to_day_mapping(self, sequence: List[int], day_assignments: List[int]) -> Dict[str, int]:
-        """Build efficient scene number to shooting day mapping"""
+        """Build efficient scene number to shooting day mapping - WITH COMPREHENSIVE VALIDATION"""
         scene_to_day = {}
         
-        for i, cluster_idx in enumerate(sequence):
-            cluster = self.cluster_manager.clusters[cluster_idx]
-            start_day = day_assignments[i]
+        try:
+            # Validate inputs
+            if not isinstance(sequence, list) or not isinstance(day_assignments, list):
+                print(f"ERROR: Invalid mapping inputs - sequence: {type(sequence)}, assignments: {type(day_assignments)}")
+                return {}
             
-            # Map each scene in this cluster to its shooting day
-            for scene in cluster.scenes:
-                scene_number = str(scene.get('Scene_Number', ''))
-                if scene_number:
-                    scene_to_day[scene_number] = start_day
+            if len(sequence) != len(day_assignments):
+                print(f"ERROR: Sequence length {len(sequence)} != assignments length {len(day_assignments)}")
+                return {}
+            
+            for i, cluster_idx in enumerate(sequence):
+                try:
+                    # Validate cluster index
+                    if not isinstance(cluster_idx, int) or cluster_idx < 0:
+                        print(f"WARNING: Invalid cluster index {cluster_idx} at position {i}")
+                        continue
+                    
+                    if cluster_idx >= len(self.cluster_manager.clusters):
+                        print(f"WARNING: Cluster index {cluster_idx} out of range (max: {len(self.cluster_manager.clusters)-1})")
+                        continue
+                    
+                    cluster = self.cluster_manager.clusters[cluster_idx]
+                    start_day = day_assignments[i]
+                    
+                    # Validate start day
+                    if not isinstance(start_day, (int, float)) or start_day < 0:
+                        print(f"WARNING: Invalid start day {start_day} for cluster {cluster_idx}")
+                        continue
+                    
+                    # Map each scene in this cluster to its shooting day
+                    for scene in cluster.scenes:
+                        try:
+                            scene_number = scene.get('Scene_Number')
+                            if scene_number is not None:
+                                scene_number_str = str(scene_number).strip()
+                                if scene_number_str:
+                                    scene_to_day[scene_number_str] = int(start_day)
+                        except Exception as e:
+                            print(f"WARNING: Failed to map scene {scene.get('Scene_Number', 'Unknown')}: {e}")
+                
+                except Exception as e:
+                    print(f"ERROR: Processing cluster {cluster_idx}: {e}")
+                    continue
+        
+        except Exception as e:
+            print(f"ERROR: Scene-to-day mapping failed: {e}")
         
         return scene_to_day
 
@@ -1703,6 +2058,230 @@ class LocationFirstGA:
                 day_assignments[cluster_idx] = self.rng.randint(0, max_day + 1)
         
         return individual
+
+    def _parse_director_constraint_safe(self, constraint):
+        """Parse director constraint with comprehensive error handling - NEW SAFE VERSION"""
+        
+        try:
+            affected_scenes = constraint.affected_scenes or []
+            constraint_level = constraint.type.value
+            
+            # Check if we have structured data from new two-agent system
+            if (constraint.date_restriction and 
+                constraint.date_restriction.get('source_format') == 'structured_v2'):
+                
+                # Direct mapping with error handling - no keyword detection needed!
+                structured_type = constraint.date_restriction.get('constraint_type', '')
+                reasoning = constraint.date_restriction.get('reasoning', '')
+                locations = constraint.date_restriction.get('locations', [])
+                
+                print(f"DEBUG: Processing structured director constraint: '{structured_type}' for scenes {affected_scenes}")
+                
+                try:
+                    # Direct constraint type mapping with validation
+                    if structured_type == 'shoot_first':
+                        valid_scenes = [str(s).strip() for s in affected_scenes if s is not None and str(s).strip()]
+                        self.director_shoot_first.extend(valid_scenes)
+                        print(f"DEBUG: Added 'shoot first' mandate for scenes: {valid_scenes}")
+                    
+                    elif structured_type == 'shoot_last':
+                        valid_scenes = [str(s).strip() for s in affected_scenes if s is not None and str(s).strip()]
+                        self.director_shoot_last.extend(valid_scenes)
+                        print(f"DEBUG: Added 'shoot last' mandate for scenes: {valid_scenes}")
+                    
+                    elif structured_type == 'sequence_before_after':
+                        sequence_rule = self._create_sequence_rule_safe('before', affected_scenes, constraint_level, reasoning)
+                        if sequence_rule:
+                            self.director_sequence_rules.append(sequence_rule)
+                            print(f"DEBUG: Added 'before' sequence rule: scenes {affected_scenes}")
+                    
+                    elif structured_type == 'sequence_after_before':
+                        sequence_rule = self._create_sequence_rule_safe('after', affected_scenes, constraint_level, reasoning)
+                        if sequence_rule:
+                            self.director_sequence_rules.append(sequence_rule)
+                            print(f"DEBUG: Added 'after' sequence rule: scenes {affected_scenes}")
+                    
+                    elif structured_type == 'same_day_grouping':
+                        if len(affected_scenes) > 1:
+                            valid_scenes = [str(s).strip() for s in affected_scenes if s is not None and str(s).strip()]
+                            if len(valid_scenes) > 1:
+                                self.director_same_day_groups.append({
+                                    'scenes': valid_scenes,
+                                    'level': constraint_level,
+                                    'reasoning': reasoning,
+                                    'constraint_text': constraint.description
+                                })
+                                print(f"DEBUG: Added same day grouping for scenes: {valid_scenes}")
+                    
+                    elif structured_type == 'consecutive_days':
+                        if len(affected_scenes) > 1:
+                            valid_scenes = [str(s).strip() for s in affected_scenes if s is not None and str(s).strip()]
+                            if len(valid_scenes) > 1:
+                                self.director_same_day_groups.append({
+                                    'scenes': valid_scenes,
+                                    'level': constraint_level,
+                                    'reasoning': reasoning,
+                                    'constraint_text': constraint.description,
+                                    'type': 'consecutive'
+                                })
+                                print(f"DEBUG: Added consecutive days grouping for scenes: {valid_scenes}")
+                    
+                    elif structured_type == 'location_grouping':
+                        self._handle_location_grouping_safe(constraint, locations, constraint_level, reasoning)
+                        print(f"DEBUG: Added location grouping for locations: {locations}")
+                    
+                    elif structured_type in ['actor_rest_day', 'prep_time_required', 'wrap_time_required']:
+                        # Future constraint types - placeholder for Phase 3
+                        print(f"DEBUG: Structured constraint type '{structured_type}' recognized but not yet implemented")
+                    
+                    else:
+                        print(f"DEBUG: Unknown structured constraint type: '{structured_type}' - will use fallback parsing")
+                        self._parse_director_constraint_fallback(constraint)
+                
+                except Exception as e:
+                    print(f"ERROR: Structured director constraint processing failed: {e}")
+                    # Try fallback as recovery
+                    self._parse_director_constraint_fallback(constraint)
+            
+            else:
+                # FALLBACK: Use legacy keyword detection for old formats
+                print(f"DEBUG: Using fallback parsing for legacy constraint: '{constraint.description}'")
+                self._parse_director_constraint_fallback(constraint)
+        
+        except Exception as e:
+            print(f"ERROR: Director constraint parsing failed: {e}")
+            print(f"       Constraint: {getattr(constraint, 'description', 'Unknown')}")
+
+    def _create_sequence_rule_safe(self, rule_type: str, affected_scenes: List[str], 
+                             constraint_level: str, reasoning: str) -> Optional[dict]:
+        """Create sequence rule from structured data with error handling"""
+        
+        try:
+            # Validate inputs
+            if not isinstance(affected_scenes, list) or len(affected_scenes) < 2:
+                print(f"DEBUG: Sequence rule needs at least 2 scenes, got: {affected_scenes}")
+                return None
+            
+            # Clean and validate scene numbers
+            clean_scenes = []
+            for scene in affected_scenes:
+                try:
+                    if scene is not None:
+                        scene_str = str(scene).strip()
+                        if scene_str:
+                            clean_scenes.append(scene_str)
+                except Exception as e:
+                    print(f"WARNING: Invalid scene in sequence rule '{scene}': {e}")
+            
+            if len(clean_scenes) < 2:
+                print(f"DEBUG: Not enough valid scenes for sequence rule: {clean_scenes}")
+                return None
+            
+            sequence_rule = {
+                'type': rule_type,  # 'before' or 'after'
+                'first_scene': clean_scenes[0],
+                'second_scene': clean_scenes[1],
+                'level': constraint_level,
+                'reasoning': reasoning,
+                'all_scenes': clean_scenes  # Store all scenes if more than 2
+            }
+
+            # Handle multiple scenes in sequence
+            if len(clean_scenes) > 2:
+                sequence_rule['additional_scenes'] = clean_scenes[2:]
+            
+            return sequence_rule
+        
+        except Exception as e:
+            print(f"ERROR: Failed to create sequence rule: {e}")
+            return None
+        
+        
+    def _handle_location_grouping_safe(self, constraint, locations: List[str], 
+                                 constraint_level: str, reasoning: str):
+        """Handle location grouping from structured data with error handling"""
+        
+        try:
+            # Validate and clean locations
+            clean_locations = []
+            for location in locations:
+                try:
+                    if location is not None:
+                        location_str = str(location).strip()
+                        if location_str:
+                            clean_locations.append(location_str)
+                except Exception as e:
+                    print(f"WARNING: Invalid location in grouping '{location}': {e}")
+            
+            for location in clean_locations:
+                try:
+                    if location not in self.director_location_groupings:
+                        self.director_location_groupings[location] = []
+                    
+                    self.director_location_groupings[location].append({
+                        'constraint': constraint,
+                        'requirement_type': 'grouping',
+                        'level': constraint_level,
+                        'reasoning': reasoning,
+                        'source': 'structured_v2'
+                    })
+                except Exception as e:
+                    print(f"ERROR: Failed to add location grouping for '{location}': {e}")
+        
+        except Exception as e:
+            print(f"ERROR: Location grouping handling failed: {e}")
+
+    
+    def validate_constraint_system(self) -> Dict[str, Any]:
+        """Validate entire constraint system and return health report"""
+        report = {
+            'total_constraints': len(self.constraints) if hasattr(self, 'constraints') else 0,
+            'valid_constraints': 0,
+            'invalid_constraints': 0,
+            'errors': [],
+            'warnings': [],
+            'recommendations': []
+        }
+        
+        try:
+            if not hasattr(self, 'constraints'):
+                report['errors'].append("No constraints attribute found")
+                return report
+            
+            for i, constraint in enumerate(self.constraints):
+                try:
+                    # Validate constraint structure
+                    if not hasattr(constraint, 'source') or not hasattr(constraint, 'type'):
+                        report['errors'].append(f"Constraint {i}: Missing required attributes")
+                        report['invalid_constraints'] += 1
+                        continue
+                    
+                    if not hasattr(constraint, 'description') or not constraint.description:
+                        report['warnings'].append(f"Constraint {i}: Empty description")
+                    
+                    if hasattr(constraint, 'affected_scenes'):
+                        if constraint.affected_scenes and not isinstance(constraint.affected_scenes, list):
+                            report['errors'].append(f"Constraint {i}: affected_scenes not a list")
+                            report['invalid_constraints'] += 1
+                            continue
+                    
+                    report['valid_constraints'] += 1
+                
+                except Exception as e:
+                    report['invalid_constraints'] += 1
+                    report['errors'].append(f"Constraint {i}: Validation error - {e}")
+            
+            # Add recommendations
+            if report['invalid_constraints'] > 0:
+                report['recommendations'].append("Review and fix invalid constraints")
+            if len(report['warnings']) > 5:
+                report['recommendations'].append("Consider improving constraint data quality")
+        
+        except Exception as e:
+            report['errors'].append(f"Validation system error: {e}")
+        
+        return report
+
 
 class ScheduleOptimizer:
     """Main orchestrator for location-first optimization"""
