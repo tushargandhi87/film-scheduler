@@ -814,8 +814,8 @@ class LocationFirstGA:
         idle_penalty = self._calculate_actor_idle_penalty(sequence, day_assignments)
         # Note: idle_penalty is negative, not a violation count
         
-        if actor_violations > 0:
-            print(f"DEBUG: Found {actor_violations} actor constraint violations")
+        #if actor_violations > 0:
+            #print(f"DEBUG: Found {actor_violations} actor constraint violations")
         
     def _map_actor_constraint(self, constraint):
         """Map complete actor constraint data from n8n - NO DEBUG LOGGING"""
@@ -897,7 +897,7 @@ class LocationFirstGA:
                                     violations += 1
                                     # REDUCED: Only log first violation per run to avoid spam
                                     if not first_violation_logged:
-                                        print(f"DEBUG: First actor date violation: {actor} unavailable {shooting_date}")
+                                        #print(f"DEBUG: First actor date violation: {actor} unavailable {shooting_date}")
                                         first_violation_logged = True
                             except:
                                 pass
@@ -930,7 +930,7 @@ class LocationFirstGA:
                                 violations += 1
                                 # REDUCED: Only log first violation per run to avoid spam
                                 if not first_violation_logged:
-                                    print(f"DEBUG: First actor week violation: {actor} in week {day_week}, needs {available_weeks}")
+                                    #print(f"DEBUG: First actor week violation: {actor} in week {day_week}, needs {available_weeks}")
                                     first_violation_logged = True
                                 break
         
@@ -969,7 +969,7 @@ class LocationFirstGA:
             if total_scheduled_days != required_days:
                 violations += 1
                 # ONLY LOG ACTUAL VIOLATIONS (not success cases)
-                print(f"DEBUG: VIOLATION - Actor '{actor}' scheduled {total_scheduled_days} days, needs {required_days}")
+                #print(f"DEBUG: VIOLATION - Actor '{actor}' scheduled {total_scheduled_days} days, needs {required_days}")
         
         return violations
 
@@ -1542,10 +1542,10 @@ class ScheduleOptimizer:
         return 'Unknown Location'
 
     def _split_scene_into_parts(self, scene: Dict, total_hours: float, max_daily_hours: float) -> List[Dict]:
-        """Split a complex scene into multiple parts following Option C (Hybrid) approach"""
+        """Split a complex scene into multiple parts - MINIMAL LOGGING"""
         
         # Calculate how many parts we need
-        total_parts = int((total_hours + max_daily_hours - 0.1) / max_daily_hours)  # Ceiling division
+        total_parts = int((total_hours + max_daily_hours - 0.1) / max_daily_hours)
         
         # Calculate hours per part
         hours_per_part = total_hours / total_parts
@@ -1562,10 +1562,10 @@ class ScheduleOptimizer:
                 # Regular part gets calculated portion, but cap at max_daily_hours
                 part_hours = min(hours_per_part, max_daily_hours)
             
-            # Create scene part using Option C (Hybrid) approach
-            scene_part = scene.copy()  # Start with original scene data
+            # Create scene part
+            scene_part = scene.copy()
             
-            # Option C: Add hybrid fields
+            # Add hybrid fields
             scene_part['Display_Name'] = f"Scene {scene['Scene_Number']} (Part {part_num} of {total_parts})"
             scene_part['split_info'] = {
                 'is_split': True,
@@ -1578,10 +1578,8 @@ class ScheduleOptimizer:
             scene_parts.append(scene_part)
             remaining_hours -= part_hours
         
-        print(f"DEBUG: Split Scene {scene['Scene_Number']} ({total_hours:.1f}h) into {total_parts} parts:")
-        for part in scene_parts:
-            split_info = part['split_info']
-            print(f"  - {part['Display_Name']}: {split_info['part_hours']}h")
+        # REDUCED: Only one summary log per scene split (not per part)
+        print(f"DEBUG: Split Scene {scene['Scene_Number']} ({total_hours:.1f}h) into {total_parts} parts")
         
         return scene_parts
 
@@ -1659,16 +1657,12 @@ class ScheduleOptimizer:
         }
 
     def _calculate_real_hard_conflicts_from_schedule(self, schedule: List[Dict]) -> int:
-        """Calculate hard conflicts by converting schedule back to GA format and checking violations"""
+        """Calculate hard conflicts by converting schedule back to GA format - MINIMAL LOGGING"""
         try:
-            print(f"DEBUG: Converting schedule with {len(schedule)} days to GA format")
-            
             # Convert schedule back to GA individual format
             sequence, day_assignments = self._schedule_to_ga_format(schedule)
-            print(f"DEBUG: GA format - sequence: {sequence}, assignments: {day_assignments}")
             
             if not sequence or not day_assignments:
-                print(f"DEBUG: Empty sequence or assignments - returning 0 conflicts")
                 return 0
             
             # Create a temporary GA instance to use violation detection methods
@@ -1677,17 +1671,14 @@ class ScheduleOptimizer:
             
             # Use the same violation detection as fitness function
             actor_violations = temp_ga._check_complete_actor_violations(sequence, day_assignments)
-            print(f"DEBUG: Actor violations in metrics: {actor_violations}")
             
             total_hard_conflicts = actor_violations
-            print(f"DEBUG: Total hard conflicts for metrics: {total_hard_conflicts}")
             
+            # REMOVED: All debug prints
             return total_hard_conflicts
             
         except Exception as e:
-            print(f"DEBUG: Exception in _calculate_real_hard_conflicts_from_schedule: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"ERROR: Metrics calculation failed: {e}")
             return 0
 
 
