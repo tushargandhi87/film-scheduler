@@ -329,66 +329,88 @@ class StructuredConstraintParser:
         return constraints
     
     # PHASE A: DATA STRUCTURE HANDLING - New Director Notes JSON Structure
-# Replace this method in StructuredConstraintParser class
+    # Replace this method in StructuredConstraintParser class
 
-def _parse_creative_constraints(self, creative_data: Dict) -> List[Constraint]:
-    """Parse director and DOP constraints - UPDATED for new director structure (Phase A)"""
-    constraints = []
-    
-    try:
-        # NEW: Parse director constraints with updated two-agent structure
-        if 'director_notes' in creative_data:
-            director_data = creative_data['director_notes']
-            print(f"DEBUG: Director data type: {type(director_data)}")
-            
-            # Handle new structured director constraints from two-agent system
-            if isinstance(director_data, dict) and 'director_constraints' in director_data:
-                director_constraints = director_data['director_constraints']
-                print(f"DEBUG: Found structured director_constraints array with {len(director_constraints)} items")
+    def _parse_creative_constraints(self, creative_data: Dict) -> List[Constraint]:
+        """Parse director and DOP constraints - UPDATED for new director structure (Phase A)"""
+        constraints = []
+        
+        try:
+            # NEW: Parse director constraints with updated two-agent structure
+            if 'director_notes' in creative_data:
+                director_data = creative_data['director_notes']
+                print(f"DEBUG: Director data type: {type(director_data)}")
                 
-                if isinstance(director_constraints, list):
-                    for i, constraint_info in enumerate(director_constraints):
-                        if isinstance(constraint_info, dict):
-                            # Extract structured data from new format
-                            constraint_type = constraint_info.get('constraint_type', '')
-                            constraint_level = constraint_info.get('constraint_level', 'Hard')
-                            constraint_text = constraint_info.get('constraint_text', '')
-                            related_scenes = constraint_info.get('related_scenes', [])
-                            related_locations = constraint_info.get('related_locations', [])
-                            reasoning = constraint_info.get('reasoning', '')
-                            
-                            print(f"DEBUG: Processing director constraint {i+1}: type='{constraint_type}', "
-                                  f"scenes={related_scenes}, level='{constraint_level}'")
-                            
-                            # Convert constraint level to enum
-                            constraint_type_enum = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
-                            
-                            # Create Constraint object with new structured data
-                            constraints.append(Constraint(
-                                source=ConstraintPriority.DIRECTOR,
-                                type=constraint_type_enum,
-                                description=constraint_text,
-                                affected_scenes=[str(s) for s in related_scenes],
-                                date_restriction={
-                                    'constraint_type': constraint_type,  # NEW: Store structured type
-                                    'locations': related_locations,
-                                    'reasoning': reasoning,
-                                    'source_format': 'structured_v2'  # Mark as new format
-                                }
-                            ))
-                        else:
-                            print(f"DEBUG: Skipping non-dict constraint item: {type(constraint_info)}")
+                # Handle new structured director constraints from two-agent system
+                if isinstance(director_data, dict) and 'director_constraints' in director_data:
+                    director_constraints = director_data['director_constraints']
+                    print(f"DEBUG: Found structured director_constraints array with {len(director_constraints)} items")
+                    
+                    if isinstance(director_constraints, list):
+                        for i, constraint_info in enumerate(director_constraints):
+                            if isinstance(constraint_info, dict):
+                                # Extract structured data from new format
+                                constraint_type = constraint_info.get('constraint_type', '')
+                                constraint_level = constraint_info.get('constraint_level', 'Hard')
+                                constraint_text = constraint_info.get('constraint_text', '')
+                                related_scenes = constraint_info.get('related_scenes', [])
+                                related_locations = constraint_info.get('related_locations', [])
+                                reasoning = constraint_info.get('reasoning', '')
+                                
+                                print(f"DEBUG: Processing director constraint {i+1}: type='{constraint_type}', "
+                                    f"scenes={related_scenes}, level='{constraint_level}'")
+                                
+                                # Convert constraint level to enum
+                                constraint_type_enum = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+                                
+                                # Create Constraint object with new structured data
+                                constraints.append(Constraint(
+                                    source=ConstraintPriority.DIRECTOR,
+                                    type=constraint_type_enum,
+                                    description=constraint_text,
+                                    affected_scenes=[str(s) for s in related_scenes],
+                                    date_restriction={
+                                        'constraint_type': constraint_type,  # NEW: Store structured type
+                                        'locations': related_locations,
+                                        'reasoning': reasoning,
+                                        'source_format': 'structured_v2'  # Mark as new format
+                                    }
+                                ))
+                            else:
+                                print(f"DEBUG: Skipping non-dict constraint item: {type(constraint_info)}")
+                    
+                    print(f"DEBUG: Successfully parsed {len([c for c in constraints if c.source == ConstraintPriority.DIRECTOR])} structured director constraints")
                 
-                print(f"DEBUG: Successfully parsed {len([c for c in constraints if c.source == ConstraintPriority.DIRECTOR])} structured director constraints")
-            
-            # FALLBACK: Handle old format for backward compatibility
-            elif isinstance(director_data, dict) and 'director_constraints' in director_data:
-                # Check if it's the old format (list of constraints with different structure)
-                old_director_constraints = director_data['director_constraints']
-                print(f"DEBUG: Found old format director_constraints")
+                # FALLBACK: Handle old format for backward compatibility
+                elif isinstance(director_data, dict) and 'director_constraints' in director_data:
+                    # Check if it's the old format (list of constraints with different structure)
+                    old_director_constraints = director_data['director_constraints']
+                    print(f"DEBUG: Found old format director_constraints")
+                    
+                    if isinstance(old_director_constraints, list):
+                        for constraint_info in old_director_constraints:
+                            if isinstance(constraint_info, dict):
+                                constraint_level = constraint_info.get('constraint_level', 'Hard')
+                                constraint_type_enum = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+                                
+                                constraints.append(Constraint(
+                                    source=ConstraintPriority.DIRECTOR,
+                                    type=constraint_type_enum,
+                                    description=constraint_info.get('constraint_text', ''),
+                                    affected_scenes=[str(s) for s in constraint_info.get('related_scenes', [])],
+                                    date_restriction={
+                                        'category': constraint_info.get('category'),
+                                        'locations': constraint_info.get('related_locations', []),
+                                        'source_format': 'legacy_v1'  # Mark as old format
+                                    }
+                                ))
+                    
+                    print(f"DEBUG: Processed legacy director constraints format")
                 
-                if isinstance(old_director_constraints, list):
-                    for constraint_info in old_director_constraints:
+                elif isinstance(director_data, list):
+                    # Handle direct list format (very old format)
+                    print(f"DEBUG: Found very old list format director_constraints")
+                    for constraint_info in director_data:
                         if isinstance(constraint_info, dict):
                             constraint_level = constraint_info.get('constraint_level', 'Hard')
                             constraint_type_enum = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
@@ -401,80 +423,58 @@ def _parse_creative_constraints(self, creative_data: Dict) -> List[Constraint]:
                                 date_restriction={
                                     'category': constraint_info.get('category'),
                                     'locations': constraint_info.get('related_locations', []),
-                                    'source_format': 'legacy_v1'  # Mark as old format
+                                    'source_format': 'legacy_list'  # Mark as very old format
                                 }
                             ))
                 
-                print(f"DEBUG: Processed legacy director constraints format")
-            
-            elif isinstance(director_data, list):
-                # Handle direct list format (very old format)
-                print(f"DEBUG: Found very old list format director_constraints")
-                for constraint_info in director_data:
-                    if isinstance(constraint_info, dict):
-                        constraint_level = constraint_info.get('constraint_level', 'Hard')
-                        constraint_type_enum = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
-                        
-                        constraints.append(Constraint(
-                            source=ConstraintPriority.DIRECTOR,
-                            type=constraint_type_enum,
-                            description=constraint_info.get('constraint_text', ''),
-                            affected_scenes=[str(s) for s in constraint_info.get('related_scenes', [])],
-                            date_restriction={
-                                'category': constraint_info.get('category'),
-                                'locations': constraint_info.get('related_locations', []),
-                                'source_format': 'legacy_list'  # Mark as very old format
-                            }
-                        ))
+                else:
+                    print(f"DEBUG: Unrecognized director_data format: {type(director_data)}")
+                    print(f"DEBUG: Director data keys: {list(director_data.keys()) if isinstance(director_data, dict) else 'Not a dict'}")
             
             else:
-                print(f"DEBUG: Unrecognized director_data format: {type(director_data)}")
-                print(f"DEBUG: Director data keys: {list(director_data.keys()) if isinstance(director_data, dict) else 'Not a dict'}")
+                print(f"DEBUG: No 'director_notes' found in creative_data")
+            
+            # Parse DOP constraints (UNCHANGED - still works with existing format)
+            if 'dop_priorities' in creative_data:
+                dop_data = creative_data['dop_priorities']
+                
+                if isinstance(dop_data, dict) and 'dop_priorities' in dop_data:
+                    dop_constraints = dop_data['dop_priorities']
+                elif isinstance(dop_data, list):
+                    dop_constraints = dop_data
+                else:
+                    dop_constraints = []
+                
+                if isinstance(dop_constraints, list):
+                    for constraint_info in dop_constraints:
+                        if isinstance(constraint_info, dict):
+                            constraint_level = constraint_info.get('constraint_level', 'Hard')
+                            constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+                            
+                            constraints.append(Constraint(
+                                source=ConstraintPriority.DOP,
+                                type=constraint_type,
+                                description=constraint_info.get('constraint_text', ''),
+                                affected_scenes=[str(s) for s in constraint_info.get('related_scenes', [])],
+                                location_restriction={
+                                    'category': constraint_info.get('category'),
+                                    'locations': constraint_info.get('related_locations', [])
+                                }
+                            ))
+                
+                print(f"DEBUG: Processed {len([c for c in constraints if c.source == ConstraintPriority.DOP])} DOP constraints")
         
-        else:
-            print(f"DEBUG: No 'director_notes' found in creative_data")
+        except Exception as e:
+            print(f"ERROR: Creative constraints parsing failed: {e}")
+            import traceback
+            traceback.print_exc()
         
-        # Parse DOP constraints (UNCHANGED - still works with existing format)
-        if 'dop_priorities' in creative_data:
-            dop_data = creative_data['dop_priorities']
-            
-            if isinstance(dop_data, dict) and 'dop_priorities' in dop_data:
-                dop_constraints = dop_data['dop_priorities']
-            elif isinstance(dop_data, list):
-                dop_constraints = dop_data
-            else:
-                dop_constraints = []
-            
-            if isinstance(dop_constraints, list):
-                for constraint_info in dop_constraints:
-                    if isinstance(constraint_info, dict):
-                        constraint_level = constraint_info.get('constraint_level', 'Hard')
-                        constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
-                        
-                        constraints.append(Constraint(
-                            source=ConstraintPriority.DOP,
-                            type=constraint_type,
-                            description=constraint_info.get('constraint_text', ''),
-                            affected_scenes=[str(s) for s in constraint_info.get('related_scenes', [])],
-                            location_restriction={
-                                'category': constraint_info.get('category'),
-                                'locations': constraint_info.get('related_locations', [])
-                            }
-                        ))
-            
-            print(f"DEBUG: Processed {len([c for c in constraints if c.source == ConstraintPriority.DOP])} DOP constraints")
-    
-    except Exception as e:
-        print(f"ERROR: Creative constraints parsing failed: {e}")
-        import traceback
-        traceback.print_exc()
-    
-    # Summary logging
-    director_count = len([c for c in constraints if c.source == ConstraintPriority.DIRECTOR])
-    dop_count = len([c for c in constraints if c.source == ConstraintPriority.DOP])
-    print(f"DEBUG: Creative constraints parsed - {director_count} director, {dop_count} DOP constraints")
-    
-    return constraints
+        # Summary logging
+        director_count = len([c for c in constraints if c.source == ConstraintPriority.DIRECTOR])
+        dop_count = len([c for c in constraints if c.source == ConstraintPriority.DOP])
+        print(f"DEBUG: Creative constraints parsed - {director_count} director, {dop_count} DOP constraints")
+        
+        return constraints
     
     def _parse_operational_data(self, operational_data: Dict) -> List[Constraint]:
         """Parse production rules and weather data"""
