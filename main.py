@@ -653,8 +653,8 @@ class LocationFirstGA:
         
         self._build_travel_times()
     
-    # SINGLE summary log only
-    print(f"DEBUG: Built constraint maps for {len(self.actor_unavailable_dates)} actors, {len(self.director_mandates)} director mandates")
+        # SINGLE summary log only
+        print(f"DEBUG: Built constraint maps for {len(self.actor_unavailable_dates)} actors, {len(self.director_mandates)} director mandates")
 
     
     def _build_travel_times(self):
