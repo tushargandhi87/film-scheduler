@@ -93,11 +93,12 @@ class ScheduleRequest(BaseModel):
     }
 
 class ScheduleResponse(BaseModel):
-    """Response model with optimized schedule"""
+    """Response model with optimized schedule - UPDATED with conflicts_summary"""
     schedule: List[Dict[str, Any]]
-    summary: Dict[str, Any]              # ADD THIS LINE
-    missing_scenes: Dict[str, Any]       # ADD THIS LINE  
+    summary: Dict[str, Any]
+    missing_scenes: Dict[str, Any]
     conflicts: List[Dict[str, Any]]
+    conflicts_summary: Dict[str, Any]        # NEW: Add this field
     metrics: Dict[str, Any]
     fitness_score: float
     processing_time_seconds: float
