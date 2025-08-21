@@ -1770,16 +1770,16 @@ class ScheduleOptimizer:
         return {}
     
     def optimize(self) -> Dict[str, Any]:
-        """Run location-first optimization - WITH CAST MAPPING"""
+        """Run location-first optimization - WITH REAL CONFLICTS REPORTING"""
         import time
         start_time = time.time()
         
-        # NEW: Pass cast_mapping to GA
+        # Pass cast_mapping to GA
         ga = LocationFirstGA(self.cluster_manager, self.constraints, self.calendar, 
                             self.params, self.cast_mapping)
         best_individual, best_fitness = ga.evolve()
         
-        # Rest unchanged
+        # Build final schedule
         final_schedule = self._build_final_schedule(best_individual)
         schedule_summary = self._build_schedule_summary(final_schedule)
         metrics = self._calculate_metrics(final_schedule)
@@ -1787,18 +1787,422 @@ class ScheduleOptimizer:
             'total_missing_scenes': len(getattr(self, 'missing_scenes_summary', [])),
             'missing_scenes_details': getattr(self, 'missing_scenes_summary', [])
         }
+        
+        # NEW: Generate detailed conflicts report instead of empty array
+        conflicts_report = self._generate_conflicts_report(final_schedule, best_individual)
+        
         processing_time = time.time() - start_time
         
         return {
             'schedule': final_schedule,
             'summary': schedule_summary,
             'missing_scenes': missing_scenes_summary,
-            'conflicts': [],
+            'conflicts': conflicts_report,  # FIX: Now contains actual violations
             'metrics': metrics,
             'fitness_score': best_fitness,
             'processing_time_seconds': processing_time
         }
     
+    def _generate_conflicts_report(self, schedule: List[Dict], best_individual: Dict) -> List[Dict]:
+        """NEW: Generate detailed constraint violation report"""
+        conflicts = []
+        
+        try:
+            print(f"DEBUG: Generating conflicts report for {len(schedule)} days")
+            
+            # Convert schedule back to GA format for violation detection
+            sequence, day_assignments = self._schedule_to_ga_format(schedule)
+            
+            if not sequence or not day_assignments:
+                print(f"DEBUG: Could not convert schedule to GA format for conflict analysis")
+                return []
+            
+            # Create temporary GA instance for violation detection
+            temp_ga = LocationFirstGA(self.cluster_manager, self.constraints, self.calendar, 
+                                    self.params, self.cast_mapping)
+            
+            # Generate conflicts by constraint type
+            conflicts.extend(self._detect_actor_conflicts(temp_ga, sequence, day_assignments, schedule))
+            conflicts.extend(self._detect_director_conflicts(temp_ga, sequence, day_assignments, schedule))
+            conflicts.extend(self._detect_location_conflicts(temp_ga, sequence, day_assignments, schedule))
+            
+            print(f"DEBUG: Generated {len(conflicts)} detailed conflict reports")
+            
+        except Exception as e:
+            print(f"ERROR: Conflicts report generation failed: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return conflicts
+
+    def _detect_actor_conflicts(self, ga_instance, sequence: List[int], day_assignments: List[int], 
+                          schedule: List[Dict]) -> List[Dict]:
+        """Detect and report actor constraint violations"""
+        conflicts = []
+        
+        try:
+            # Build scene-to-day mapping
+            scene_to_day = ga_instance._build_scene_to_day_mapping(sequence, day_assignments)
+            
+            # Check actor unavailable dates
+            conflicts.extend(self._check_actor_unavailable_date_conflicts(
+                ga_instance, sequence, day_assignments, scene_to_day, schedule))
+            
+            # Check actor available weeks  
+            conflicts.extend(self._check_actor_available_week_conflicts(
+                ga_instance, sequence, day_assignments, scene_to_day, schedule))
+            
+            # Check actor required days
+            conflicts.extend(self._check_actor_required_day_conflicts(
+                ga_instance, sequence, day_assignments, scene_to_day, schedule))
+            
+        except Exception as e:
+            print(f"ERROR: Actor conflict detection failed: {e}")
+        
+        return conflicts
+
+    def _check_actor_unavailable_date_conflicts(self, ga_instance, sequence: List[int], 
+                                          day_assignments: List[int], scene_to_day: Dict[str, int],
+                                          schedule: List[Dict]) -> List[Dict]:
+        """Check for actor unavailable date conflicts with detailed reporting"""
+        conflicts = []
+        
+        for i, cluster_idx in enumerate(sequence):
+            cluster = ga_instance.cluster_manager.clusters[cluster_idx]
+            start_day = day_assignments[i]
+            
+            for day_offset in range(cluster.estimated_days):
+                shooting_day_idx = start_day + day_offset
+                if shooting_day_idx >= len(ga_instance.calendar.shooting_days):
+                    continue
+                
+                shooting_date = ga_instance.calendar.shooting_days[shooting_day_idx]
+                
+                # Check each character in this cluster
+                for character in cluster.required_actors:
+                    actor = ga_instance._get_actor_for_character(character)
+                    
+                    if actor and actor in ga_instance.actor_unavailable_dates:
+                        for unavailable_date_str in ga_instance.actor_unavailable_dates[actor]:
+                            try:
+                                unavailable_date = datetime.strptime(unavailable_date_str, "%Y-%m-%d").date()
+                                if shooting_date == unavailable_date:
+                                    # Find affected scenes on this day
+                                    affected_scenes = []
+                                    if shooting_day_idx < len(schedule):
+                                        day_schedule = schedule[shooting_day_idx]
+                                        affected_scenes = [scene['Scene_Number'] for scene in day_schedule.get('scenes', [])]
+                                    
+                                    conflicts.append({
+                                        'type': 'actor_unavailable_date',
+                                        'severity': 'Hard',
+                                        'description': f"Actor '{actor}' (character '{character}') scheduled on unavailable date {shooting_date}",
+                                        'affected_scenes': affected_scenes,
+                                        'affected_days': [shooting_date.strftime("%Y-%m-%d")],
+                                        'actor_name': actor,
+                                        'character_name': character,
+                                        'conflict_date': shooting_date.strftime("%Y-%m-%d")
+                                    })
+                            except:
+                                pass
+        
+        return conflicts
+
+    def _check_actor_available_week_conflicts(self, ga_instance, sequence: List[int], 
+                                        day_assignments: List[int], scene_to_day: Dict[str, int],
+                                        schedule: List[Dict]) -> List[Dict]:
+        """Check for actor available week conflicts"""
+        conflicts = []
+        
+        for i, cluster_idx in enumerate(sequence):
+            cluster = ga_instance.cluster_manager.clusters[cluster_idx]
+            start_day = day_assignments[i]
+            
+            for character in cluster.required_actors:
+                actor = ga_instance._get_actor_for_character(character)
+                
+                if actor and actor in ga_instance.actor_available_weeks:
+                    available_weeks = ga_instance.actor_available_weeks[actor]
+                    
+                    for day_offset in range(cluster.estimated_days):
+                        day_idx = start_day + day_offset
+                        if day_idx < len(ga_instance.calendar.shooting_days):
+                            day_week = ga_instance._get_shooting_week_from_day(day_idx)
+                            shooting_date = ga_instance.calendar.shooting_days[day_idx]
+                            
+                            if day_week not in available_weeks:
+                                # Find affected scenes
+                                affected_scenes = []
+                                if day_idx < len(schedule):
+                                    day_schedule = schedule[day_idx]
+                                    affected_scenes = [scene['Scene_Number'] for scene in day_schedule.get('scenes', [])]
+                                
+                                conflicts.append({
+                                    'type': 'actor_available_week',
+                                    'severity': 'Hard',
+                                    'description': f"Actor '{actor}' (character '{character}') scheduled in week {day_week}, only available weeks {available_weeks}",
+                                    'affected_scenes': affected_scenes,
+                                    'affected_days': [shooting_date.strftime("%Y-%m-%d")],
+                                    'actor_name': actor,
+                                    'character_name': character,
+                                    'scheduled_week': day_week,
+                                    'available_weeks': available_weeks
+                                })
+                                break
+        
+        return conflicts
+
+
+    def _check_actor_required_day_conflicts(self, ga_instance, sequence: List[int], 
+                                      day_assignments: List[int], scene_to_day: Dict[str, int],
+                                      schedule: List[Dict]) -> List[Dict]:
+        """Check for actor required days conflicts"""
+        conflicts = []
+        
+        # Count actual scheduled days per character
+        character_scheduled_days = defaultdict(int)
+        character_scheduled_dates = defaultdict(list)
+        
+        for i, cluster_idx in enumerate(sequence):
+            cluster = ga_instance.cluster_manager.clusters[cluster_idx]
+            start_day = day_assignments[i]
+            
+            for character in cluster.required_actors:
+                for day_offset in range(cluster.estimated_days):
+                    day_idx = start_day + day_offset
+                    if day_idx < len(ga_instance.calendar.shooting_days):
+                        character_scheduled_days[character] += 1
+                        shooting_date = ga_instance.calendar.shooting_days[day_idx]
+                        character_scheduled_dates[character].append(shooting_date.strftime("%Y-%m-%d"))
+        
+        # Check against required days for each actor
+        for actor, required_days in ga_instance.actor_required_days.items():
+            characters_for_actor = [char for char, mapped_actor in ga_instance.cast_mapping.items() 
+                                if mapped_actor == actor]
+            
+            total_scheduled_days = 0
+            all_scheduled_dates = []
+            affected_scenes = []
+            
+            for character in characters_for_actor:
+                total_scheduled_days += character_scheduled_days.get(character, 0)
+                all_scheduled_dates.extend(character_scheduled_dates.get(character, []))
+                
+                # Find scenes for this character
+                for scene_num, day_idx in scene_to_day.items():
+                    if day_idx < len(schedule):
+                        day_schedule = schedule[day_idx]
+                        for scene in day_schedule.get('scenes', []):
+                            if scene['Scene_Number'] == scene_num:
+                                cast = scene.get('Cast', [])
+                                if character in cast:
+                                    affected_scenes.append(scene_num)
+            
+            if total_scheduled_days != required_days:
+                conflicts.append({
+                    'type': 'actor_required_days',
+                    'severity': 'Hard',
+                    'description': f"Actor '{actor}' scheduled for {total_scheduled_days} days, requires {required_days} days",
+                    'affected_scenes': list(set(affected_scenes)),
+                    'affected_days': list(set(all_scheduled_dates)),
+                    'actor_name': actor,
+                    'characters_played': characters_for_actor,
+                    'scheduled_days': total_scheduled_days,
+                    'required_days': required_days,
+                    'days_difference': total_scheduled_days - required_days
+                })
+        
+        return conflicts    
+
+    def _detect_director_conflicts(self, ga_instance, sequence: List[int], day_assignments: List[int],
+                             schedule: List[Dict]) -> List[Dict]:
+        """Detect and report director constraint violations"""
+        conflicts = []
+        
+        try:
+            # Build scene-to-day mapping
+            scene_to_day = ga_instance._build_scene_to_day_mapping(sequence, day_assignments)
+            
+            # Check shoot first violations
+            conflicts.extend(self._check_director_shoot_first_conflicts(
+                ga_instance, scene_to_day, schedule))
+            
+            # Check shoot last violations
+            conflicts.extend(self._check_director_shoot_last_conflicts(
+                ga_instance, scene_to_day, schedule))
+            
+            # Check sequence rule violations
+            conflicts.extend(self._check_director_sequence_conflicts(
+                ga_instance, scene_to_day, schedule))
+            
+            # Check same day group violations
+            conflicts.extend(self._check_director_same_day_conflicts(
+                ga_instance, scene_to_day, schedule))
+            
+        except Exception as e:
+            print(f"ERROR: Director conflict detection failed: {e}")
+        
+        return conflicts
+
+    def _check_director_shoot_first_conflicts(self, ga_instance, scene_to_day: Dict[str, int],
+                                        schedule: List[Dict]) -> List[Dict]:
+        """Check director shoot first violations"""
+        conflicts = []
+        
+        if not ga_instance.director_shoot_first:
+            return conflicts
+        
+        # Find earliest day among mandated scenes
+        earliest_mandated_day = float('inf')
+        for scene_num in ga_instance.director_shoot_first:
+            if scene_num in scene_to_day:
+                earliest_mandated_day = min(earliest_mandated_day, scene_to_day[scene_num])
+        
+        # Find scenes scheduled before earliest mandated scene
+        if earliest_mandated_day != float('inf'):
+            for scene_num, day in scene_to_day.items():
+                if scene_num not in ga_instance.director_shoot_first and day < earliest_mandated_day:
+                    shooting_date = ga_instance.calendar.shooting_days[day] if day < len(ga_instance.calendar.shooting_days) else None
+                    
+                    conflicts.append({
+                        'type': 'director_shoot_first_violation',
+                        'severity': 'Hard',
+                        'description': f"Scene {scene_num} scheduled before 'shoot first' scenes {ga_instance.director_shoot_first}",
+                        'affected_scenes': [scene_num] + ga_instance.director_shoot_first,
+                        'affected_days': [shooting_date.strftime("%Y-%m-%d")] if shooting_date else [],
+                        'violating_scene': scene_num,
+                        'mandated_first_scenes': ga_instance.director_shoot_first
+                    })
+        
+        return conflicts    
+    def _check_director_shoot_last_conflicts(self, ga_instance, scene_to_day: Dict[str, int],
+                                       schedule: List[Dict]) -> List[Dict]:
+        """Check director shoot last violations"""
+        conflicts = []
+        
+        if not ga_instance.director_shoot_last:
+            return conflicts
+        
+        # Find latest day among mandated scenes
+        latest_mandated_day = -1
+        for scene_num in ga_instance.director_shoot_last:
+            if scene_num in scene_to_day:
+                latest_mandated_day = max(latest_mandated_day, scene_to_day[scene_num])
+        
+        # Find scenes scheduled after latest mandated scene
+        if latest_mandated_day >= 0:
+            for scene_num, day in scene_to_day.items():
+                if scene_num not in ga_instance.director_shoot_last and day > latest_mandated_day:
+                    shooting_date = ga_instance.calendar.shooting_days[day] if day < len(ga_instance.calendar.shooting_days) else None
+                    
+                    conflicts.append({
+                        'type': 'director_shoot_last_violation',
+                        'severity': 'Hard',
+                        'description': f"Scene {scene_num} scheduled after 'shoot last' scenes {ga_instance.director_shoot_last}",
+                        'affected_scenes': [scene_num] + ga_instance.director_shoot_last,
+                        'affected_days': [shooting_date.strftime("%Y-%m-%d")] if shooting_date else [],
+                        'violating_scene': scene_num,
+                        'mandated_last_scenes': ga_instance.director_shoot_last
+                    })
+        
+        return conflicts
+
+    def _check_director_sequence_conflicts(self, ga_instance, scene_to_day: Dict[str, int],
+                                     schedule: List[Dict]) -> List[Dict]:
+        """Check director sequence rule violations"""
+        conflicts = []
+        
+        for rule in ga_instance.director_sequence_rules:
+            rule_type = rule.get('type')
+            
+            if rule_type == 'before':
+                first_scene = rule['first_scene']
+                second_scene = rule['second_scene']
+                
+                if (first_scene in scene_to_day and second_scene in scene_to_day):
+                    if scene_to_day[first_scene] >= scene_to_day[second_scene]:
+                        first_date = ga_instance.calendar.shooting_days[scene_to_day[first_scene]] if scene_to_day[first_scene] < len(ga_instance.calendar.shooting_days) else None
+                        second_date = ga_instance.calendar.shooting_days[scene_to_day[second_scene]] if scene_to_day[second_scene] < len(ga_instance.calendar.shooting_days) else None
+                        
+                        conflicts.append({
+                            'type': 'director_sequence_violation',
+                            'severity': 'Hard',
+                            'description': f"Scene {first_scene} must be shot before Scene {second_scene}, but scheduled after",
+                            'affected_scenes': [first_scene, second_scene],
+                            'affected_days': [d.strftime("%Y-%m-%d") for d in [first_date, second_date] if d],
+                            'sequence_rule': rule,
+                            'first_scene': first_scene,
+                            'second_scene': second_scene,
+                            'rule_type': 'before'
+                        })
+            
+            elif rule_type == 'after':
+                first_scene = rule['first_scene']
+                second_scene = rule['second_scene']
+                
+                if (first_scene in scene_to_day and second_scene in scene_to_day):
+                    if scene_to_day[first_scene] <= scene_to_day[second_scene]:
+                        first_date = ga_instance.calendar.shooting_days[scene_to_day[first_scene]] if scene_to_day[first_scene] < len(ga_instance.calendar.shooting_days) else None
+                        second_date = ga_instance.calendar.shooting_days[scene_to_day[second_scene]] if scene_to_day[second_scene] < len(ga_instance.calendar.shooting_days) else None
+                        
+                        conflicts.append({
+                            'type': 'director_sequence_violation',
+                            'severity': 'Hard',
+                            'description': f"Scene {first_scene} must be shot after Scene {second_scene}, but scheduled before",
+                            'affected_scenes': [first_scene, second_scene],
+                            'affected_days': [d.strftime("%Y-%m-%d") for d in [first_date, second_date] if d],
+                            'sequence_rule': rule,
+                            'first_scene': first_scene,
+                            'second_scene': second_scene,
+                            'rule_type': 'after'
+                        })
+        
+        return conflicts
+
+    def _check_director_same_day_conflicts(self, ga_instance, scene_to_day: Dict[str, int],
+                                     schedule: List[Dict]) -> List[Dict]:
+        """Check director same day grouping violations"""
+        conflicts = []
+        
+        for group in ga_instance.director_same_day_groups:
+            scenes = group['scenes']
+            
+            # Get days for all scenes in group
+            group_days = []
+            scene_dates = []
+            for scene_num in scenes:
+                if scene_num in scene_to_day:
+                    day_idx = scene_to_day[scene_num]
+                    group_days.append(day_idx)
+                    if day_idx < len(ga_instance.calendar.shooting_days):
+                        scene_dates.append(ga_instance.calendar.shooting_days[day_idx].strftime("%Y-%m-%d"))
+            
+            # Check if scenes are spread across multiple days
+            if len(set(group_days)) > 1:
+                conflicts.append({
+                    'type': 'director_same_day_violation',
+                    'severity': 'Hard',
+                    'description': f"Scenes {scenes} must be shot on same day but scheduled across {len(set(group_days))} different days",
+                    'affected_scenes': scenes,
+                    'affected_days': list(set(scene_dates)),
+                    'same_day_group': group,
+                    'days_spread': len(set(group_days)),
+                    'reasoning': group.get('reasoning', '')
+                })
+        
+        return conflicts    
+
+    def _detect_location_conflicts(self, ga_instance, sequence: List[int], day_assignments: List[int],
+                             schedule: List[Dict]) -> List[Dict]:
+        """Detect location-related conflicts (placeholder for future location constraints)"""
+        conflicts = []
+        
+        # TODO: Implement location availability window violations
+        # TODO: Implement equipment rental period violations
+        # TODO: Implement production rule violations
+        
+        return conflicts
+
     def _build_final_schedule(self, individual: Dict) -> List[Dict]:
         """Build final day-by-day schedule from best individual - WITH SCENE SPLITTING"""
         schedule = []
