@@ -2964,6 +2964,7 @@ async def optimize_schedule(request: ScheduleRequest):
             summary=result['summary'],                     # NEW
             missing_scenes=result['missing_scenes'],       # NEW
             conflicts=result['conflicts'],
+            conflicts_summary=result['conflicts_summary'],
             metrics=result['metrics'],
             fitness_score=result['fitness_score'],
             processing_time_seconds=result['processing_time_seconds']
