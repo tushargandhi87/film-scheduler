@@ -126,8 +126,8 @@ class StructuredConstraintParser:
             'failed_constraints': []  # Store details of failed constraints
         }
     
-    # Initialize constraints list for validation
-    self.constraints = []
+        # Initialize constraints list for validation
+        self.constraints = []
     
     def parse_all_constraints(self, constraints_dict: Dict[str, Any]) -> List[Constraint]:
         """Parse all structured constraint groups from n8n - ENHANCED Phase A logging"""
