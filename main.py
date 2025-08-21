@@ -1770,7 +1770,7 @@ class ScheduleOptimizer:
         return {}
     
     def optimize(self) -> Dict[str, Any]:
-        """Run location-first optimization - WITH REAL CONFLICTS REPORTING"""
+        """Run location-first optimization - WITH CONFLICTS SUMMARY"""
         import time
         start_time = time.time()
         
@@ -1788,8 +1788,8 @@ class ScheduleOptimizer:
             'missing_scenes_details': getattr(self, 'missing_scenes_summary', [])
         }
         
-        # NEW: Generate detailed conflicts report instead of empty array
-        conflicts_report = self._generate_conflicts_report(final_schedule, best_individual)
+        # Generate detailed conflicts report with summary
+        conflicts_data = self._generate_conflicts_report(final_schedule, best_individual)
         
         processing_time = time.time() - start_time
         
@@ -1797,15 +1797,16 @@ class ScheduleOptimizer:
             'schedule': final_schedule,
             'summary': schedule_summary,
             'missing_scenes': missing_scenes_summary,
-            'conflicts': conflicts_report,  # FIX: Now contains actual violations
+            'conflicts': conflicts_data['detailed_conflicts'],      # Granular conflicts for UI drill-down
+            'conflicts_summary': conflicts_data['conflicts_summary'], # NEW: Constraint-level summary
             'metrics': metrics,
             'fitness_score': best_fitness,
             'processing_time_seconds': processing_time
         }
     
-    def _generate_conflicts_report(self, schedule: List[Dict], best_individual: Dict) -> List[Dict]:
-        """NEW: Generate detailed constraint violation report"""
-        conflicts = []
+    def _generate_conflicts_report(self, schedule: List[Dict], best_individual: Dict) -> Dict:
+        """Generate detailed conflicts AND constraint-level summary"""
+        detailed_conflicts = []
         
         try:
             print(f"DEBUG: Generating conflicts report for {len(schedule)} days")
@@ -1815,25 +1816,227 @@ class ScheduleOptimizer:
             
             if not sequence or not day_assignments:
                 print(f"DEBUG: Could not convert schedule to GA format for conflict analysis")
-                return []
+                return {'detailed_conflicts': [], 'conflicts_summary': self._empty_conflicts_summary()}
             
             # Create temporary GA instance for violation detection
             temp_ga = LocationFirstGA(self.cluster_manager, self.constraints, self.calendar, 
                                     self.params, self.cast_mapping)
             
             # Generate conflicts by constraint type
-            conflicts.extend(self._detect_actor_conflicts(temp_ga, sequence, day_assignments, schedule))
-            conflicts.extend(self._detect_director_conflicts(temp_ga, sequence, day_assignments, schedule))
-            conflicts.extend(self._detect_location_conflicts(temp_ga, sequence, day_assignments, schedule))
+            detailed_conflicts.extend(self._detect_actor_conflicts(temp_ga, sequence, day_assignments, schedule))
+            detailed_conflicts.extend(self._detect_director_conflicts(temp_ga, sequence, day_assignments, schedule))
+            detailed_conflicts.extend(self._detect_location_conflicts(temp_ga, sequence, day_assignments, schedule))
             
-            print(f"DEBUG: Generated {len(conflicts)} detailed conflict reports")
+            print(f"DEBUG: Generated {len(detailed_conflicts)} detailed conflict reports")
+            
+            # NEW: Generate constraint-level summary
+            conflicts_summary = self._build_conflicts_summary(detailed_conflicts, temp_ga, sequence, day_assignments)
             
         except Exception as e:
             print(f"ERROR: Conflicts report generation failed: {e}")
             import traceback
             traceback.print_exc()
+            detailed_conflicts = []
+            conflicts_summary = self._empty_conflicts_summary()
         
-        return conflicts
+        return {
+            'detailed_conflicts': detailed_conflicts,
+            'conflicts_summary': conflicts_summary
+        }
+
+    def _build_conflicts_summary(self, detailed_conflicts: List[Dict], ga_instance, 
+                           sequence: List[int], day_assignments: List[int]) -> Dict:
+        """NEW: Build constraint-level conflicts summary for UI grouping"""
+        
+        # Group detailed conflicts by constraint type
+        conflicts_by_type = defaultdict(list)
+        for conflict in detailed_conflicts:
+            conflicts_by_type[conflict['type']].append(conflict)
+        
+        # Count unique constraint violations (should match hard_conflicts metric)
+        unique_constraint_violations = self._count_unique_constraint_violations(
+            ga_instance, sequence, day_assignments, detailed_conflicts)
+        
+        # Build summary by constraint category
+        actor_violations = self._summarize_actor_violations(conflicts_by_type, ga_instance)
+        director_violations = self._summarize_director_violations(conflicts_by_type, ga_instance)
+        location_violations = self._summarize_location_violations(conflicts_by_type, ga_instance)
+        
+        # Calculate totals
+        total_constraint_violations = (actor_violations['constraint_count'] + 
+                                    director_violations['constraint_count'] + 
+                                    location_violations['constraint_count'])
+        
+        conflicts_summary = {
+            'total_detailed_reports': len(detailed_conflicts),
+            'total_constraint_violations': total_constraint_violations,
+            'constraint_categories': {
+                'actor_constraints': actor_violations,
+                'director_constraints': director_violations, 
+                'location_constraints': location_violations
+            },
+            'conflicts_by_type': {
+                conflict_type: {
+                    'count': len(conflicts),
+                    'severity_breakdown': self._get_severity_breakdown(conflicts)
+                }
+                for conflict_type, conflicts in conflicts_by_type.items()
+            },
+            'most_affected_scenes': self._get_most_affected_scenes(detailed_conflicts),
+            'most_affected_days': self._get_most_affected_days(detailed_conflicts)
+        }
+        
+        print(f"DEBUG: Conflicts summary - {total_constraint_violations} constraint violations, "
+            f"{len(detailed_conflicts)} detailed reports")
+        
+        return conflicts_summary
+
+    def _count_unique_constraint_violations(self, ga_instance, sequence: List[int], 
+                                      day_assignments: List[int], detailed_conflicts: List[Dict]) -> Dict:
+        """Count unique constraint violations (should match hard_conflicts metric)"""
+        
+        # Use the same violation counting logic as GA fitness function
+        actor_violations = ga_instance._check_complete_actor_violations(sequence, day_assignments)
+        director_violations = ga_instance._check_complete_director_violations(sequence, day_assignments)
+        
+        # TODO: Add other constraint types when implemented
+        location_violations = 0
+        equipment_violations = 0
+        production_violations = 0
+        
+        return {
+            'actor': actor_violations,
+            'director': director_violations,
+            'location': location_violations,
+            'equipment': equipment_violations,
+            'production': production_violations,
+        }    
+      
+    def _summarize_actor_violations(self, conflicts_by_type: Dict, ga_instance) -> Dict:
+        """Summarize actor constraint violations"""
+        
+        actor_conflict_types = ['actor_unavailable_date', 'actor_available_week', 'actor_required_days']
+        actor_conflicts = []
+        for conflict_type in actor_conflict_types:
+            actor_conflicts.extend(conflicts_by_type.get(conflict_type, []))
+        
+        # Count unique actors with violations
+        affected_actors = set()
+        for conflict in actor_conflicts:
+            if 'actor_name' in conflict:
+                affected_actors.add(conflict['actor_name'])
+        
+        return {
+            'constraint_count': len(ga_instance.actor_unavailable_dates) + len(ga_instance.actor_available_weeks) + len(ga_instance.actor_required_days),
+            'violations_count': len([c for c in actor_conflicts if c.get('severity') == 'Hard']),
+            'detailed_reports_count': len(actor_conflicts),
+            'affected_actors_count': len(affected_actors),
+            'affected_actors': list(affected_actors),
+            'violation_types': {
+                'unavailable_dates': len(conflicts_by_type.get('actor_unavailable_date', [])),
+                'available_weeks': len(conflicts_by_type.get('actor_available_week', [])),
+                'required_days': len(conflicts_by_type.get('actor_required_days', []))
+            }
+        }
+
+    def _summarize_director_violations(self, conflicts_by_type: Dict, ga_instance) -> Dict:
+        """Summarize director constraint violations"""
+        
+        director_conflict_types = ['director_shoot_first_violation', 'director_shoot_last_violation', 
+                                'director_sequence_violation', 'director_same_day_violation']
+        director_conflicts = []
+        for conflict_type in director_conflict_types:
+            director_conflicts.extend(conflicts_by_type.get(conflict_type, []))
+        
+        return {
+            'constraint_count': (len(ga_instance.director_shoot_first) + len(ga_instance.director_shoot_last) + 
+                            len(ga_instance.director_sequence_rules) + len(ga_instance.director_same_day_groups)),
+            'violations_count': len([c for c in director_conflicts if c.get('severity') == 'Hard']),
+            'detailed_reports_count': len(director_conflicts),
+            'violation_types': {
+                'shoot_first': len(conflicts_by_type.get('director_shoot_first_violation', [])),
+                'shoot_last': len(conflicts_by_type.get('director_shoot_last_violation', [])),
+                'sequence_rules': len(conflicts_by_type.get('director_sequence_violation', [])),
+                'same_day_groups': len(conflicts_by_type.get('director_same_day_violation', []))
+            }
+        }
+
+    def _summarize_location_violations(self, conflicts_by_type: Dict, ga_instance) -> Dict:
+        """Summarize location constraint violations (placeholder)"""
+        
+        # TODO: Implement when location constraints are added
+        return {
+            'constraint_count': 0,
+            'violations_count': 0,
+            'detailed_reports_count': 0,
+            'violation_types': {}
+        }
+
+    def _get_severity_breakdown(self, conflicts: List[Dict]) -> Dict:
+        """Get breakdown of conflicts by severity"""
+        severity_count = defaultdict(int)
+        for conflict in conflicts:
+            severity_count[conflict.get('severity', 'Unknown')] += 1
+        return dict(severity_count)
+
+    def _get_most_affected_scenes(self, detailed_conflicts: List[Dict], limit: int = 5) -> List[Dict]:
+        """Get scenes most affected by conflicts"""
+        scene_conflict_count = defaultdict(int)
+        scene_conflict_types = defaultdict(set)
+        
+        for conflict in detailed_conflicts:
+            for scene in conflict.get('affected_scenes', []):
+                scene_conflict_count[scene] += 1
+                scene_conflict_types[scene].add(conflict['type'])
+        
+        # Sort by conflict count and return top scenes
+        top_scenes = sorted(scene_conflict_count.items(), key=lambda x: x[1], reverse=True)[:limit]
+        
+        return [
+            {
+                'scene_number': scene,
+                'conflict_count': count,
+                'conflict_types': list(scene_conflict_types[scene])
+            }
+            for scene, count in top_scenes
+        ]
+
+    def _get_most_affected_days(self, detailed_conflicts: List[Dict], limit: int = 5) -> List[Dict]:
+        """Get days most affected by conflicts"""
+        day_conflict_count = defaultdict(int)
+        day_conflict_types = defaultdict(set)
+        
+        for conflict in detailed_conflicts:
+            for day in conflict.get('affected_days', []):
+                day_conflict_count[day] += 1
+                day_conflict_types[day].add(conflict['type'])
+        
+        # Sort by conflict count and return top days
+        top_days = sorted(day_conflict_count.items(), key=lambda x: x[1], reverse=True)[:limit]
+        
+        return [
+            {
+                'date': day,
+                'conflict_count': count,
+                'conflict_types': list(day_conflict_types[day])
+            }
+            for day, count in top_days
+        ]
+
+    def _empty_conflicts_summary(self) -> Dict:
+        """Return empty conflicts summary structure"""
+        return {
+            'total_detailed_reports': 0,
+            'total_constraint_violations': 0,
+            'constraint_categories': {
+                'actor_constraints': {'constraint_count': 0, 'violations_count': 0, 'detailed_reports_count': 0},
+                'director_constraints': {'constraint_count': 0, 'violations_count': 0, 'detailed_reports_count': 0},
+                'location_constraints': {'constraint_count': 0, 'violations_count': 0, 'detailed_reports_count': 0}
+            },
+            'conflicts_by_type': {},
+            'most_affected_scenes': [],
+            'most_affected_days': []
+        }
 
     def _detect_actor_conflicts(self, ga_instance, sequence: List[int], day_assignments: List[int], 
                           schedule: List[Dict]) -> List[Dict]:
