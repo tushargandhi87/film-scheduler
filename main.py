@@ -1530,6 +1530,8 @@ class LocationFirstGA:
             'sequence': sequence,
             'day_assignments': day_assignments
         }
+
+    
     
     def fitness(self, individual: Dict) -> float:
         """Calculate fitness using graduated penalty system - ENHANCED with location constraints"""
@@ -3100,14 +3102,38 @@ class ScheduleOptimizer:
         }
 
     def _summarize_location_violations(self, conflicts_by_type: Dict, ga_instance) -> Dict:
-        """Summarize location constraint violations (placeholder)"""
+        """Summarize location constraint violations"""
         
-        # TODO: Implement when location constraints are added
+        location_conflict_types = ['location_availability_violation', 'location_time_restriction_violation', 
+                                'location_day_restriction_violation', 'location_access_limitation']
+        location_conflicts = []
+        for conflict_type in location_conflict_types:
+            location_conflicts.extend(conflicts_by_type.get(conflict_type, []))
+        
+        # Count unique locations with violations
+        affected_locations = set()
+        for conflict in location_conflicts:
+            if 'location' in conflict:
+                affected_locations.add(conflict['location'])
+        
+        # Count total constraints
+        total_constraints = (len(ga_instance.location_availability_windows) + 
+                            len(ga_instance.location_time_restrictions) + 
+                            len(ga_instance.location_day_restrictions) + 
+                            len(ga_instance.location_access_limitations))
+        
         return {
-            'constraint_count': 0,
-            'violations_count': 0,
-            'detailed_reports_count': 0,
-            'violation_types': {}
+            'constraint_count': total_constraints,
+            'violations_count': len([c for c in location_conflicts if c.get('severity') == 'Hard']),
+            'detailed_reports_count': len(location_conflicts),
+            'affected_locations_count': len(affected_locations),
+            'affected_locations': list(affected_locations),
+            'violation_types': {
+                'availability_violations': len(conflicts_by_type.get('location_availability_violation', [])),
+                'time_restrictions': len(conflicts_by_type.get('location_time_restriction_violation', [])),
+                'day_restrictions': len(conflicts_by_type.get('location_day_restriction_violation', [])),
+                'access_limitations': len(conflicts_by_type.get('location_access_limitation', []))
+            }
         }
 
     def _get_severity_breakdown(self, conflicts: List[Dict]) -> Dict:
@@ -3534,15 +3560,277 @@ class ScheduleOptimizer:
         return conflicts    
 
     def _detect_location_conflicts(self, ga_instance, sequence: List[int], day_assignments: List[int],
-                             schedule: List[Dict]) -> List[Dict]:
-        """Detect location-related conflicts (placeholder for future location constraints)"""
+                         schedule: List[Dict]) -> List[Dict]:
+        """Detect and report location constraint violations"""
         conflicts = []
         
-        # TODO: Implement location availability window violations
-        # TODO: Implement equipment rental period violations
-        # TODO: Implement production rule violations
+        try:
+            # Check availability window violations
+            conflicts.extend(self._check_location_availability_conflicts(
+                ga_instance, sequence, day_assignments, schedule))
+            
+            # Check time restriction violations
+            conflicts.extend(self._check_location_time_conflicts(
+                ga_instance, sequence, day_assignments, schedule))
+            
+            # Check day restriction violations
+            conflicts.extend(self._check_location_day_conflicts(
+                ga_instance, sequence, day_assignments, schedule))
+            
+            # Access limitations are soft constraints - report as warnings
+            conflicts.extend(self._check_location_access_conflicts(
+                ga_instance, sequence, day_assignments, schedule))
+            
+        except Exception as e:
+            print(f"ERROR: Location conflict detection failed: {e}")
         
         return conflicts
+
+    def _check_location_availability_conflicts(self, ga_instance, sequence: List[int], 
+                                     day_assignments: List[int], schedule: List[Dict]) -> List[Dict]:
+        """Check location availability window violations"""
+        conflicts = []
+        
+        try:
+            for i, cluster_idx in enumerate(sequence):
+                if cluster_idx >= len(ga_instance.cluster_manager.clusters):
+                    continue
+                
+                cluster = ga_instance.cluster_manager.clusters[cluster_idx]
+                location = cluster.location
+                start_day = day_assignments[i]
+                
+                if location in ga_instance.location_availability_windows:
+                    windows = ga_instance.location_availability_windows[location]
+                    
+                    # Check each day this cluster needs
+                    for day_offset in range(cluster.estimated_days):
+                        shooting_day_idx = start_day + day_offset
+                        if shooting_day_idx >= len(ga_instance.calendar.shooting_days):
+                            continue
+                        
+                        shooting_date = ga_instance.calendar.shooting_days[shooting_day_idx]
+                        
+                        # Check against all availability windows for this location
+                        date_allowed = False
+                        for window in windows:
+                            if self._is_date_in_availability_window(shooting_date, window):
+                                date_allowed = True
+                                break
+                        
+                        if not date_allowed:
+                            # Find affected scenes
+                            affected_scenes = []
+                            if shooting_day_idx < len(schedule):
+                                day_schedule = schedule[shooting_day_idx]
+                                affected_scenes = [scene['Scene_Number'] for scene in day_schedule.get('scenes', [])]
+                            
+                            conflicts.append({
+                                'type': 'location_availability_violation',
+                                'severity': 'Hard',
+                                'description': f"Location '{location}' scheduled on {shooting_date} but not available",
+                                'affected_scenes': affected_scenes,
+                                'affected_days': [shooting_date.strftime("%Y-%m-%d")],
+                                'location': location,
+                                'scheduled_date': shooting_date.strftime("%Y-%m-%d"),
+                                'available_windows': [self._format_availability_window(w) for w in windows]
+                            })
+        
+        except Exception as e:
+            print(f"ERROR: Location availability conflict check failed: {e}")
+        
+        return conflicts
+
+    def _check_location_time_conflicts(self, ga_instance, sequence: List[int], 
+                                day_assignments: List[int], schedule: List[Dict]) -> List[Dict]:
+        """Check location time restriction violations"""
+        conflicts = []
+        
+        try:
+            for i, cluster_idx in enumerate(sequence):
+                if cluster_idx >= len(ga_instance.cluster_manager.clusters):
+                    continue
+                
+                cluster = ga_instance.cluster_manager.clusters[cluster_idx]
+                location = cluster.location
+                
+                if location in ga_instance.location_time_restrictions:
+                    restrictions = ga_instance.location_time_restrictions[location]
+                    
+                    for restriction in restrictions:
+                        if restriction.get('end_time'):
+                            end_time_str = restriction['end_time']
+                            
+                            # Check if cluster's estimated hours violate end time
+                            # Simple check: if cluster needs more than 8 hours and end time is before 6pm
+                            if cluster.total_hours > 8:
+                                try:
+                                    from datetime import datetime
+                                    end_time = datetime.strptime(end_time_str, "%H:%M").time()
+                                    
+                                    if end_time.hour < 18:  # Before 6 PM
+                                        start_day = day_assignments[i]
+                                        shooting_date = None
+                                        if start_day < len(ga_instance.calendar.shooting_days):
+                                            shooting_date = ga_instance.calendar.shooting_days[start_day]
+                                        
+                                        # Find affected scenes
+                                        affected_scenes = []
+                                        if start_day < len(schedule):
+                                            day_schedule = schedule[start_day]
+                                            affected_scenes = [scene['Scene_Number'] for scene in day_schedule.get('scenes', [])]
+                                        
+                                        conflicts.append({
+                                            'type': 'location_time_restriction_violation',
+                                            'severity': 'Hard',
+                                            'description': f"Location '{location}' requires {cluster.total_hours:.1f}h but must end by {end_time_str}",
+                                            'affected_scenes': affected_scenes,
+                                            'affected_days': [shooting_date.strftime("%Y-%m-%d")] if shooting_date else [],
+                                            'location': location,
+                                            'required_hours': cluster.total_hours,
+                                            'end_time_restriction': end_time_str
+                                        })
+                                except:
+                                    pass
+        
+        except Exception as e:
+            print(f"ERROR: Location time conflict check failed: {e}")
+        
+        return conflicts
+
+    def _check_location_day_conflicts(self, ga_instance, sequence: List[int], 
+                                day_assignments: List[int], schedule: List[Dict]) -> List[Dict]:
+        """Check location day-of-week restriction violations"""
+        conflicts = []
+        
+        try:
+            for i, cluster_idx in enumerate(sequence):
+                if cluster_idx >= len(ga_instance.cluster_manager.clusters):
+                    continue
+                
+                cluster = ga_instance.cluster_manager.clusters[cluster_idx]
+                location = cluster.location
+                start_day = day_assignments[i]
+                
+                if location in ga_instance.location_day_restrictions:
+                    restriction = ga_instance.location_day_restrictions[location]
+                    allowed_days = restriction.get('allowed_days', [])
+                    
+                    # Check each day this cluster needs
+                    for day_offset in range(cluster.estimated_days):
+                        shooting_day_idx = start_day + day_offset
+                        if shooting_day_idx >= len(ga_instance.calendar.shooting_days):
+                            continue
+                        
+                        shooting_date = ga_instance.calendar.shooting_days[shooting_day_idx]
+                        day_name = shooting_date.strftime("%A")
+                        
+                        if day_name not in allowed_days:
+                            # Find affected scenes
+                            affected_scenes = []
+                            if shooting_day_idx < len(schedule):
+                                day_schedule = schedule[shooting_day_idx]
+                                affected_scenes = [scene['Scene_Number'] for scene in day_schedule.get('scenes', [])]
+                            
+                            conflicts.append({
+                                'type': 'location_day_restriction_violation',
+                                'severity': 'Hard',
+                                'description': f"Location '{location}' scheduled on {day_name} but only available {', '.join(allowed_days)}",
+                                'affected_scenes': affected_scenes,
+                                'affected_days': [shooting_date.strftime("%Y-%m-%d")],
+                                'location': location,
+                                'scheduled_day': day_name,
+                                'allowed_days': allowed_days
+                            })
+        
+        except Exception as e:
+            print(f"ERROR: Location day conflict check failed: {e}")
+        
+        return conflicts
+
+    def _check_location_access_conflicts(self, ga_instance, sequence: List[int], 
+                                day_assignments: List[int], schedule: List[Dict]) -> List[Dict]:
+        """Check location access limitation conflicts (soft constraints)"""
+        conflicts = []
+        
+        try:
+            for i, cluster_idx in enumerate(sequence):
+                if cluster_idx >= len(ga_instance.cluster_manager.clusters):
+                    continue
+                
+                cluster = ga_instance.cluster_manager.clusters[cluster_idx]
+                location = cluster.location
+                start_day = day_assignments[i]
+                
+                if location in ga_instance.location_access_limitations:
+                    limitations = ga_instance.location_access_limitations[location]
+                    
+                    for limitation in limitations:
+                        access_type = limitation.get('access_type', 'general')
+                        
+                        # Find affected scenes
+                        affected_scenes = []
+                        affected_days = []
+                        for day_offset in range(cluster.estimated_days):
+                            shooting_day_idx = start_day + day_offset
+                            if shooting_day_idx < len(ga_instance.calendar.shooting_days):
+                                shooting_date = ga_instance.calendar.shooting_days[shooting_day_idx]
+                                affected_days.append(shooting_date.strftime("%Y-%m-%d"))
+                                
+                                if shooting_day_idx < len(schedule):
+                                    day_schedule = schedule[shooting_day_idx]
+                                    affected_scenes.extend([scene['Scene_Number'] for scene in day_schedule.get('scenes', [])])
+                        
+                        conflicts.append({
+                            'type': 'location_access_limitation',
+                            'severity': 'Soft',
+                            'description': f"Location '{location}' has {access_type} access limitations",
+                            'affected_scenes': list(set(affected_scenes)),
+                            'affected_days': affected_days,
+                            'location': location,
+                            'access_type': access_type,
+                            'limitations': limitation.get('limitations', []),
+                            'requirements': limitation.get('requirements', [])
+                        })
+        
+        except Exception as e:
+            print(f"ERROR: Location access conflict check failed: {e}")
+        
+        return conflicts
+    def _is_date_in_availability_window(self, shooting_date, window: Dict) -> bool:
+        """Check if shooting date falls within availability window"""
+        try:
+            from datetime import datetime
+            
+            # Check restricted dates first
+            if window.get('restricted_dates'):
+                date_str = shooting_date.strftime("%Y-%m-%d")
+                if date_str in window['restricted_dates']:
+                    return False
+            
+            # Check date range
+            if window.get('start_date') and window.get('end_date'):
+                start_date = datetime.strptime(window['start_date'], "%Y-%m-%d").date()
+                end_date = datetime.strptime(window['end_date'], "%Y-%m-%d").date()
+                
+                if not (start_date <= shooting_date <= end_date):
+                    return False
+            
+            # If we get here, date is allowed
+            return True
+        
+        except Exception as e:
+            print(f"WARNING: Date window check failed: {e}")
+            return True  # Default to allowed if check fails
+
+    def _format_availability_window(self, window: Dict) -> str:
+        """Format availability window for human readable display"""
+        parts = []
+        if window.get('start_date') and window.get('end_date'):
+            parts.append(f"{window['start_date']} to {window['end_date']}")
+        if window.get('start_time') and window.get('end_time'):
+            parts.append(f"{window['start_time']}-{window['end_time']}")
+        return "; ".join(parts) if parts else "Availability window"
 
     def _build_final_schedule(self, individual: Dict) -> List[Dict]:
         """Build final day-by-day schedule from best individual - WITH SCENE SPLITTING"""
