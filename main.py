@@ -2642,8 +2642,9 @@ class LocationFirstGA:
                 location = location_mapping[location]
                 print(f"DEBUG: Mapped fictional '{original_location}' to geographic '{location}'")
             
-            print(f"DEBUG: Mapping {constraint_type} constraint for location '{location}'")
-            
+            #print(f"DEBUG: Mapping {constraint_type} constraint for location '{location}'")
+            #location constraint debugging stopped by tushar on 22 August
+
             if constraint_type == 'availability_window':
                 if location not in self.location_availability_windows:
                     self.location_availability_windows[location] = []
@@ -2662,8 +2663,9 @@ class LocationFirstGA:
                 
                 if window:
                     self.location_availability_windows[location].append(window)
-                    print(f"DEBUG: Added availability window for {location}: {window}")
-            
+                    #print(f"DEBUG: Added availability window for {location}: {window}")
+                    #location constraint debugging stopped by tushar on 22 August
+
             elif constraint_type == 'time_restriction':
                 if location not in self.location_time_restrictions:
                     self.location_time_restrictions[location] = []
@@ -2677,8 +2679,9 @@ class LocationFirstGA:
                     restriction['end_time'] = parsed_data['end_time_restriction']
                 
                 self.location_time_restrictions[location].append(restriction)
-                print(f"DEBUG: Added time restriction for {location}: {restriction}")
-            
+                #print(f"DEBUG: Added time restriction for {location}: {restriction}")
+                #location constraint debugging stopped by tushar on 22 August
+
             elif constraint_type == 'day_restriction':
                 if parsed_data.get('day_restrictions'):
                     self.location_day_restrictions[location] = {
@@ -2686,8 +2689,9 @@ class LocationFirstGA:
                         'restriction_type': parsed_data.get('restriction_type', 'specific_days'),
                         'constraint_level': constraint.type.value
                     }
-                    print(f"DEBUG: Added day restriction for {location}: {parsed_data['day_restrictions']}")
-            
+                    #print(f"DEBUG: Added day restriction for {location}: {parsed_data['day_restrictions']}")
+                    #location constraint debugging stopped by tushar on 22 August
+
             elif constraint_type == 'access_limitation':
                 if location not in self.location_access_limitations:
                     self.location_access_limitations[location] = []
@@ -2705,8 +2709,9 @@ class LocationFirstGA:
                     limitation['time_periods'] = parsed_data['time_periods']
                 
                 self.location_access_limitations[location].append(limitation)
-                print(f"DEBUG: Added access limitation for {location}: {limitation}")
-            
+                #print(f"DEBUG: Added access limitation for {location}: {limitation}")
+                #location constraint debugging stopped by tushar on 22 August
+
             elif constraint_type == 'environmental_factor':
                 if location not in self.location_environmental_factors:
                     self.location_environmental_factors[location] = []
@@ -2718,44 +2723,80 @@ class LocationFirstGA:
                 }
                 
                 self.location_environmental_factors[location].append(factor)
-                print(f"DEBUG: Added environmental factor for {location}: {factor}")
-        
+                #print(f"DEBUG: Added environmental factor for {location}: {factor}")
+                #location constraint debugging stopped by tushar on 22 August
+
         except Exception as e:
             print(f"ERROR: Failed to map location constraint: {e}")
 
     def _map_equipment_constraint(self, constraint):
-        """Map structured equipment constraint to GA storage - NEW METHOD"""
+        """Map structured equipment constraint to GA storage - FIXED METHOD"""
         try:
-            equipment_restriction = constraint.equipment_restriction
-            equipment_data = equipment_restriction.get('equipment_data', {})
+            # Equipment constraints come through different paths, check all possibilities
+            equipment_data = None
             
-            print(f"DEBUG: Processing {len(equipment_data)} equipment items")
+            # Check if it's from technical_constraints (equipment section)
+            if hasattr(constraint, 'date_restriction') and constraint.date_restriction:
+                if 'equipment' in constraint.date_restriction:
+                    equipment_data = constraint.date_restriction['equipment']
+                elif 'equipment_data' in constraint.date_restriction:
+                    equipment_data = constraint.date_restriction['equipment_data']
             
-            for equipment_name, equipment_info in equipment_data.items():
-                try:
-                    print(f"DEBUG: Mapping equipment '{equipment_name}'")
+            # Check if it's from location_restriction (sometimes equipment is location-based)
+            if not equipment_data and hasattr(constraint, 'location_restriction') and constraint.location_restriction:
+                if 'equipment' in constraint.location_restriction:
+                    equipment_data = constraint.location_restriction['equipment']
+            
+            # Check description for equipment info (fallback)
+            if not equipment_data and hasattr(constraint, 'description') and constraint.description:
+                # This would be from the technical_constraints parsing
+                if 'equipment' in constraint.description.lower():
+                    print(f"DEBUG: Found equipment constraint in description: {constraint.description}")
+                    # For now, skip parsing from description - need structured data
+                    return
+            
+            if not equipment_data:
+                print(f"DEBUG: No equipment data found in constraint: {constraint.description}")
+                return
+            
+            print(f"DEBUG: Processing equipment data: {equipment_data}")
+            
+            # If equipment_data is from technical_constraints, it might be nested
+            if isinstance(equipment_data, dict):
+                for equipment_name, equipment_info in equipment_data.items():
+                    try:
+                        print(f"DEBUG: Mapping equipment '{equipment_name}'")
+                        
+                        # Store basic availability data
+                        if equipment_info.get('weeks'):
+                            self.equipment_availability_weeks[equipment_name] = equipment_info['weeks']
+                            print(f"DEBUG: Equipment '{equipment_name}' available weeks: {equipment_info['weeks']}")
+                        
+                        if equipment_info.get('dates'):
+                            self.equipment_availability_dates[equipment_name] = equipment_info['dates']
+                            print(f"DEBUG: Equipment '{equipment_name}' available dates: {equipment_info['dates']}")
+                        
+                        if equipment_info.get('days'):
+                            self.equipment_required_days[equipment_name] = equipment_info['days']
+                            print(f"DEBUG: Equipment '{equipment_name}' required days: {equipment_info['days']}")
+                        
+                        # Process enhanced equipment_requirements section
+                        equipment_requirements = equipment_info.get('equipment_requirements', {})
+                        if equipment_requirements:
+                            self._process_equipment_requirements(equipment_name, equipment_requirements)
+                        else:
+                            print(f"DEBUG: No equipment_requirements found for '{equipment_name}'")
                     
-                    # Store basic availability data
-                    if equipment_info.get('weeks'):
-                        self.equipment_availability_weeks[equipment_name] = equipment_info['weeks']
-                    
-                    if equipment_info.get('dates'):
-                        self.equipment_availability_dates[equipment_name] = equipment_info['dates']
-                    
-                    if equipment_info.get('days'):
-                        self.equipment_required_days[equipment_name] = equipment_info['days']
-                    
-                    # Process enhanced equipment_requirements section
-                    equipment_requirements = equipment_info.get('equipment_requirements', {})
-                    if equipment_requirements:
-                        self._process_equipment_requirements(equipment_name, equipment_requirements)
-                    
-                except Exception as e:
-                    print(f"ERROR: Failed to process equipment '{equipment_name}': {e}")
-                    continue
+                    except Exception as e:
+                        print(f"ERROR: Failed to process equipment '{equipment_name}': {e}")
+                        continue
+            else:
+                print(f"DEBUG: Equipment data is not a dict: {type(equipment_data)}")
         
         except Exception as e:
             print(f"ERROR: Equipment constraint mapping failed: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _process_equipment_requirements(self, equipment_name: str, requirements: Dict):
         """Process enhanced equipment requirements data"""
@@ -3088,25 +3129,29 @@ class LocationFirstGA:
                     if structured_type == 'shoot_first':
                         valid_scenes = [str(s).strip() for s in affected_scenes if s is not None and str(s).strip()]
                         self.director_shoot_first.extend(valid_scenes)
-                        print(f"DEBUG: Added 'shoot first' mandate for scenes: {valid_scenes}")
-                    
+                        #print(f"DEBUG: Added 'shoot first' mandate for scenes: {valid_scenes}")
+                        #director constraint debugging stopped by tushar on 22 august
+
                     elif structured_type == 'shoot_last':
                         valid_scenes = [str(s).strip() for s in affected_scenes if s is not None and str(s).strip()]
                         self.director_shoot_last.extend(valid_scenes)
-                        print(f"DEBUG: Added 'shoot last' mandate for scenes: {valid_scenes}")
-                    
+                        #print(f"DEBUG: Added 'shoot last' mandate for scenes: {valid_scenes}")
+                        #director constraint debugging stopped by tushar on 22 august
+
                     elif structured_type == 'sequence_before_after':
                         sequence_rule = self._create_sequence_rule_safe('before', affected_scenes, constraint_level, reasoning)
                         if sequence_rule:
                             self.director_sequence_rules.append(sequence_rule)
-                            print(f"DEBUG: Added 'before' sequence rule: scenes {affected_scenes}")
-                    
+                            #print(f"DEBUG: Added 'before' sequence rule: scenes {affected_scenes}")
+                            #director constraint debugging stopped by tushar on 22 august
+
                     elif structured_type == 'sequence_after_before':
                         sequence_rule = self._create_sequence_rule_safe('after', affected_scenes, constraint_level, reasoning)
                         if sequence_rule:
                             self.director_sequence_rules.append(sequence_rule)
-                            print(f"DEBUG: Added 'after' sequence rule: scenes {affected_scenes}")
-                    
+                            #print(f"DEBUG: Added 'after' sequence rule: scenes {affected_scenes}")
+                            #director constraint debugging stopped by tushar on 22 august
+
                     elif structured_type == 'same_day_grouping':
                         if len(affected_scenes) > 1:
                             valid_scenes = [str(s).strip() for s in affected_scenes if s is not None and str(s).strip()]
@@ -3117,8 +3162,9 @@ class LocationFirstGA:
                                     'reasoning': reasoning,
                                     'constraint_text': constraint.description
                                 })
-                                print(f"DEBUG: Added same day grouping for scenes: {valid_scenes}")
-                    
+                                #print(f"DEBUG: Added same day grouping for scenes: {valid_scenes}")
+                                #director constraint debugging stopped by tushar on 22 august
+
                     elif structured_type == 'consecutive_days':
                         if len(affected_scenes) > 1:
                             valid_scenes = [str(s).strip() for s in affected_scenes if s is not None and str(s).strip()]
@@ -3130,16 +3176,20 @@ class LocationFirstGA:
                                     'constraint_text': constraint.description,
                                     'type': 'consecutive'
                                 })
-                                print(f"DEBUG: Added consecutive days grouping for scenes: {valid_scenes}")
-                    
+                                #print(f"DEBUG: Added consecutive days grouping for scenes: {valid_scenes}")
+                                #director constraint debugging stopped by tushar on 22 august
+
                     elif structured_type == 'location_grouping':
                         self._handle_location_grouping_safe(constraint, locations, constraint_level, reasoning)
-                        print(f"DEBUG: Added location grouping for locations: {locations}")
-                    
+                        #print(f"DEBUG: Added location grouping for locations: {locations}")
+                        #director constraint debugging stopped by tushar on 22 august
+
                     elif structured_type in ['actor_rest_day', 'prep_time_required', 'wrap_time_required']:
                         # Future constraint types - placeholder for Phase 3
-                        print(f"DEBUG: Structured constraint type '{structured_type}' recognized but not yet implemented")
-                    
+                        pass
+                        #print(f"DEBUG: Structured constraint type '{structured_type}' recognized but not yet implemented")
+                        #director constraint debugging stopped by tushar on 22 august
+
                     else:
                         print(f"DEBUG: Unknown structured constraint type: '{structured_type}' - will use fallback parsing")
                         self._parse_director_constraint_fallback(constraint)
