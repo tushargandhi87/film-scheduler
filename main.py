@@ -2282,6 +2282,32 @@ class LocationFirstGA:
             if not location:
                 return
             
+            # Map fictional location names to geographic addresses used by clusters
+            location_mapping = {
+                'UNIVERSITY HOSPITAL': 'University Hospital, 150 Bergen St, Newark, NJ',
+                'DANIEL\'S HOUSE': '88 Wyoming Ave, Maplewood, NJ',
+                'DIANE\'S HOUSE': '45 Salter Pl, Maplewood, NJ',
+                'MUSIC HALL OF WILLIAMSBURG': 'Music Hall of Williamsburg, 66 N 6th St, Brooklyn, NY',
+                'ALLISON AND NATHAN\'S HOUSE': 'The Local Apartments, 153 S Orange Ave, South Orange, NJ',
+                'WILLIAMSBURG LOFT': '4th Floor Walk-up, 118 N 7th St, Brooklyn, NY',
+                'SAINT JUDE EXECUTIVE RETREAT': 'Saint Jude Executive Retreat, Amsterdam, NY',
+                'KRUG\'S TAVERN': 'Krug\'s Tavern, 118 Wilson Ave, Newark, NJ',
+                'SUMMIT DINER': 'Summit Diner, 1 Union Pl, Summit, NJ',
+                'SOUTH ORANGE TRAIN STATION': 'South Orange Train Station, 19 Sloan St, South Orange, NJ',
+                'THE FOX & FALCON': 'The Fox & Falcon, 19 Valley St, South Orange, NJ',
+                'LOCAL PHARMACY': 'Local Pharmacy, 171 Maplewood Ave, Maplewood, NJ',
+                'COLUMBIA HIGH SCHOOL': 'Columbia High School, 17 Parker Ave, Maplewood, NJ',
+                'SETON HALL UNIVERSITY': 'Seton Hall University, 400 S Orange Ave, South Orange, NJ',
+                'ST. JOSEPH\'S CHURCH': 'St. Joseph\'s Church, 767 Prospect St, Maplewood, NJ',
+                'THE GRAND CAFE': 'The Grand Cafe, 400 W South Orange Ave, South Orange, NJ'
+            }
+            
+            # Use mapped location if available
+            original_location = location
+            if location in location_mapping:
+                location = location_mapping[location]
+                print(f"DEBUG: Mapped fictional '{original_location}' to geographic '{location}'")
+            
             print(f"DEBUG: Mapping {constraint_type} constraint for location '{location}'")
             
             if constraint_type == 'availability_window':
@@ -2302,9 +2328,8 @@ class LocationFirstGA:
                 
                 if window:
                     self.location_availability_windows[location].append(window)
-                   # print(f"DEBUG: Added availability window for {location}: {window}")
-                     #debug commented by tushar on 22 August
-
+                    print(f"DEBUG: Added availability window for {location}: {window}")
+            
             elif constraint_type == 'time_restriction':
                 if location not in self.location_time_restrictions:
                     self.location_time_restrictions[location] = []
@@ -2318,9 +2343,8 @@ class LocationFirstGA:
                     restriction['end_time'] = parsed_data['end_time_restriction']
                 
                 self.location_time_restrictions[location].append(restriction)
-                #print(f"DEBUG: Added time restriction for {location}: {restriction}")
-                 #debug commented by tushar on 22 August
-
+                print(f"DEBUG: Added time restriction for {location}: {restriction}")
+            
             elif constraint_type == 'day_restriction':
                 if parsed_data.get('day_restrictions'):
                     self.location_day_restrictions[location] = {
@@ -2328,9 +2352,8 @@ class LocationFirstGA:
                         'restriction_type': parsed_data.get('restriction_type', 'specific_days'),
                         'constraint_level': constraint.type.value
                     }
-                   # print(f"DEBUG: Added day restriction for {location}: {parsed_data['day_restrictions']}")
-                     #debug commented by tushar on 22 August
-
+                    print(f"DEBUG: Added day restriction for {location}: {parsed_data['day_restrictions']}")
+            
             elif constraint_type == 'access_limitation':
                 if location not in self.location_access_limitations:
                     self.location_access_limitations[location] = []
@@ -2348,9 +2371,8 @@ class LocationFirstGA:
                     limitation['time_periods'] = parsed_data['time_periods']
                 
                 self.location_access_limitations[location].append(limitation)
-                #print(f"DEBUG: Added access limitation for {location}: {limitation}")
-                 #debug commented by tushar on 22 August
-
+                print(f"DEBUG: Added access limitation for {location}: {limitation}")
+            
             elif constraint_type == 'environmental_factor':
                 if location not in self.location_environmental_factors:
                     self.location_environmental_factors[location] = []
@@ -2362,9 +2384,8 @@ class LocationFirstGA:
                 }
                 
                 self.location_environmental_factors[location].append(factor)
-                #print(f"DEBUG: Added environmental factor for {location}: {factor}")
-                 #debug commented by tushar on 22 August
-
+                print(f"DEBUG: Added environmental factor for {location}: {factor}")
+        
         except Exception as e:
             print(f"ERROR: Failed to map location constraint: {e}")
 
