@@ -1177,6 +1177,10 @@ class LocationFirstGA:
         self.params = params
         self.rng = np.random.RandomState(params.get('seed', 42))
         
+        # Debug logging limiters to prevent log flooding
+        self._equipment_debug_count = 0
+        self._equipment_debug_limit = 5  # Only log first 10 equipment violations
+
         # Existing constraint storage
         self.cast_mapping = cast_mapping
         
@@ -1536,9 +1540,15 @@ class LocationFirstGA:
                         # Check week availability
                         if equipment_name in self.equipment_availability_weeks:
                             available_weeks = self.equipment_availability_weeks[equipment_name]
+
+
                             if shooting_week not in available_weeks:
                                 violations += 1
-                                print(f"DEBUG: Equipment violation - '{equipment_name}' needed in week {shooting_week}, available weeks {available_weeks}")
+                                self._equipment_debug_count += 1
+                                if self._equipment_debug_count <= self._equipment_debug_limit:
+                                    print(f"DEBUG: Equipment violation - '{equipment_name}' needed in week {shooting_week}, available weeks {available_weeks}")
+                                elif self._equipment_debug_count == self._equipment_debug_limit + 1:
+                                    print(f"DEBUG: Equipment violations continue... (suppressing further debug to prevent log flooding)")
         
         except Exception as e:
             print(f"ERROR: Equipment availability check failed: {e}")
@@ -1618,9 +1628,12 @@ class LocationFirstGA:
                         if day_week == week_num:
                             week_usage_count += 1
                     
+
                     if week_usage_count > max_days:
                         violations += 1
-                        print(f"DEBUG: Rental violation - '{equipment_name}' used {week_usage_count} days in week {week_num}, rental allows {max_days} days")
+                        self._equipment_debug_count += 1
+                        if self._equipment_debug_count <= self._equipment_debug_limit:
+                            print(f"DEBUG: Rental violation - '{equipment_name}' used {week_usage_count} days in week {week_num}, rental allows {max_days} days")
         
         except Exception as e:
             print(f"ERROR: Rental schedule validation failed: {e}")
@@ -1723,10 +1736,13 @@ class LocationFirstGA:
                 
                 for day_idx in scheduled_days:
                     shooting_week = self._get_shooting_week_from_day(day_idx)
+        
                     if shooting_week not in available_weeks:
                         violations += 1
-                        print(f"DEBUG: Location equipment violation - '{equipment_name}' at '{geographic_location}' in week {shooting_week}, available weeks {available_weeks}")
-        
+                        self._equipment_debug_count += 1
+                        if self._equipment_debug_count <= self._equipment_debug_limit:
+                            print(f"DEBUG: Location equipment violation - '{equipment_name}' at '{geographic_location}' in week {shooting_week}, available weeks {available_weeks}")
+
         except Exception as e:
             print(f"ERROR: Equipment validation at location failed: {e}")
         
@@ -1790,10 +1806,13 @@ class LocationFirstGA:
             # Check for conflicts (same equipment at multiple locations same day)
             for equipment_name, day_locations in equipment_location_calendar.items():
                 for day_idx, locations in day_locations.items():
+                   
                     if len(set(locations)) > 1:  # Same equipment at multiple locations same day
                         violations += 1
-                        print(f"DEBUG: Equipment movement conflict - '{equipment_name}' needed at multiple locations on day {day_idx}: {set(locations)}")
-        
+                        self._equipment_debug_count += 1
+                        if self._equipment_debug_count <= self._equipment_debug_limit:
+                            print(f"DEBUG: Equipment movement conflict - '{equipment_name}' needed at multiple locations on day {day_idx}: {set(locations)}")
+
         except Exception as e:
             print(f"ERROR: Equipment movement conflict check failed: {e}")
         
@@ -3443,7 +3462,9 @@ class ScheduleOptimizer:
             detailed_conflicts.extend(self._detect_actor_conflicts(temp_ga, sequence, day_assignments, schedule))
             detailed_conflicts.extend(self._detect_director_conflicts(temp_ga, sequence, day_assignments, schedule))
             detailed_conflicts.extend(self._detect_location_conflicts(temp_ga, sequence, day_assignments, schedule))
+            detailed_conflicts.extend(self._detect_equipment_conflicts(temp_ga, sequence, day_assignments, schedule))  # ADD THIS LINE
             
+
             print(f"DEBUG: Generated {len(detailed_conflicts)} detailed conflict reports")
             
             # NEW: Generate constraint-level summary
@@ -3518,12 +3539,12 @@ class ScheduleOptimizer:
         # Use the same violation counting logic as GA fitness function
         actor_violations = ga_instance._check_complete_actor_violations(sequence, day_assignments)
         director_violations = ga_instance._check_complete_director_violations(sequence, day_assignments)
-        
+        location_violations = ga_instance._check_complete_location_violations(sequence, day_assignments)
+        equipment_violations = ga_instance._check_complete_equipment_violations(sequence, day_assignments)
+
         # TODO: Add other constraint types when implemented
-        location_violations = 0
-        equipment_violations = 0
         production_violations = 0
-        
+
         return {
             'actor': actor_violations,
             'director': director_violations,
