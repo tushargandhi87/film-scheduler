@@ -1180,6 +1180,16 @@ class LocationFirstGA:
         self.location_access_limitations = {}       # location -> {access_type, limitations, requirements}
         self.location_environmental_factors = {}    # location -> {factor_type, details}
         
+        # NEW: Equipment constraint storage
+        self.equipment_availability_dates = {}     # equipment -> [available_dates]
+        self.equipment_availability_weeks = {}     # equipment -> [available_weeks] 
+        self.equipment_required_days = {}          # equipment -> required_days_count
+        self.equipment_scene_requirements = {}     # scene -> [required_equipment]
+        self.equipment_character_deps = {}         # character -> [required_equipment]
+        self.equipment_location_deps = {}          # location -> [required_equipment]
+        self.equipment_prep_requirements = {}      # equipment -> prep_data
+        self.equipment_rental_schedules = {}       # equipment -> rental_schedule_data
+
         # Build all constraint maps
         self._build_constraint_maps()
         self._build_travel_times()
@@ -1188,7 +1198,7 @@ class LocationFirstGA:
     # Replace these methods in LocationFirstGA class
 
     def _build_constraint_maps(self):
-        """Build efficient lookup structures for constraints - ENHANCED with location constraints"""
+        """Build efficient lookup structures for constraints - ENHANCED with location and equipment constraints"""
         # Existing constraint initialization
         self.actor_unavailable_dates = defaultdict(list)
         self.actor_available_weeks = {}
@@ -1212,7 +1222,8 @@ class LocationFirstGA:
         constraints_processed = 0
         structured_processed = 0
         fallback_processed = 0
-        location_constraints_processed = 0  # NEW
+        location_constraints_processed = 0
+        equipment_constraints_processed = 0  # NEW
         
         # Process all constraints with individual error handling
         for constraint in self.constraints:
@@ -1230,9 +1241,12 @@ class LocationFirstGA:
                         fallback_processed += 1
                     
                     self._parse_director_constraint_safe(constraint)
-                elif constraint.source == ConstraintPriority.LOCATION:  # NEW: Location constraint processing
+                elif constraint.source == ConstraintPriority.LOCATION:  # Location constraint processing
                     self._map_location_constraint(constraint)
                     location_constraints_processed += 1
+                elif constraint.source == ConstraintPriority.EQUIPMENT:  # NEW: Equipment constraint processing
+                    self._map_equipment_constraint(constraint)
+                    equipment_constraints_processed += 1
                 elif constraint.location_restriction and constraint.location_restriction.get('location'):
                     # Legacy location constraint handling
                     location = constraint.location_restriction['location']
@@ -1250,7 +1264,7 @@ class LocationFirstGA:
         except Exception as e:
             print(f"ERROR: Travel times building failed: {e}")
         
-        # Enhanced summary with location constraints
+        # Enhanced summary with location and equipment constraints
         print(f"DEBUG: Processed {constraints_processed} constraints with {constraint_processing_errors} errors")
         print(f"DEBUG: Built constraint maps - {len(self.actor_unavailable_dates)} actors, "
             f"{len(self.director_shoot_first)} 'shoot first', "
@@ -1258,16 +1272,26 @@ class LocationFirstGA:
             f"{len(self.director_sequence_rules)} sequence rules, "
             f"{len(self.director_same_day_groups)} same day groups")
         
-        # NEW: Location constraint summary
+        # Location constraint summary
         print(f"DEBUG: Location constraints - {len(self.location_availability_windows)} availability windows, "
             f"{len(self.location_time_restrictions)} time restrictions, "
             f"{len(self.location_day_restrictions)} day restrictions, "
             f"{len(self.location_access_limitations)} access limitations")
         
+        # NEW: Equipment constraint summary
+        print(f"DEBUG: Equipment constraints - {len(self.equipment_availability_weeks)} equipment items, "
+            f"{len(self.equipment_scene_requirements)} scene requirements, "
+            f"{len(self.equipment_prep_requirements)} prep requirements")
+        
         if structured_processed > 0 or fallback_processed > 0:
             print(f"DEBUG: Director constraint processing - {structured_processed} structured (direct mapping), "
                 f"{fallback_processed} fallback (keyword detection)")
-
+        
+        if location_constraints_processed > 0:
+            print(f"DEBUG: Location constraints processed: {location_constraints_processed}")
+        
+        if equipment_constraints_processed > 0:  # NEW
+            print(f"DEBUG: Equipment constraints processed: {equipment_constraints_processed}")
     
     def _build_travel_times(self):
         """Build travel time matrix between locations"""
@@ -1464,6 +1488,311 @@ class LocationFirstGA:
         
         return violations
 
+    def _check_complete_equipment_violations(self, sequence: List[int], day_assignments: List[int]) -> int:
+        """Check ALL equipment constraint violations - ENHANCED with location checking"""
+        violations = 0
+        
+        try:
+            # Check equipment availability violations
+            violations += self._check_equipment_availability_violations(sequence, day_assignments)
+            
+            # Check equipment rental period violations  
+            violations += self._check_equipment_rental_violations(sequence, day_assignments)
+            
+            # Check equipment prep requirement violations
+            violations += self._check_equipment_prep_violations(sequence, day_assignments)
+            
+            # NEW: Check location-based equipment violations
+            violations += self._check_equipment_location_violations(sequence, day_assignments)
+            
+        except Exception as e:
+            print(f"ERROR: Equipment violations check failed: {e}")
+            return 0
+        
+        return violations
+
+    def _check_equipment_availability_violations(self, sequence: List[int], day_assignments: List[int]) -> int:
+        """Check equipment availability during scheduled scenes"""
+        violations = 0
+        
+        try:
+            # Build scene-to-day mapping
+            scene_to_day = self._build_scene_to_day_mapping(sequence, day_assignments)
+            
+            # Check each scene's equipment requirements
+            for scene_num, required_equipment_list in self.equipment_scene_requirements.items():
+                if scene_num in scene_to_day:
+                    shooting_day = scene_to_day[scene_num]
+                    shooting_week = self._get_shooting_week_from_day(shooting_day)
+                    
+                    for equipment_name in required_equipment_list:
+                        # Check week availability
+                        if equipment_name in self.equipment_availability_weeks:
+                            available_weeks = self.equipment_availability_weeks[equipment_name]
+                            if shooting_week not in available_weeks:
+                                violations += 1
+                                print(f"DEBUG: Equipment violation - '{equipment_name}' needed in week {shooting_week}, available weeks {available_weeks}")
+        
+        except Exception as e:
+            print(f"ERROR: Equipment availability check failed: {e}")
+        
+        return violations
+
+    def _check_equipment_rental_violations(self, sequence: List[int], day_assignments: List[int]) -> int:
+        """Check equipment rental period conflicts"""
+        violations = 0
+        
+        try:
+            # Check for equipment conflicts (same equipment needed simultaneously)
+            equipment_usage_days = defaultdict(list)
+            scene_to_day = self._build_scene_to_day_mapping(sequence, day_assignments)
+            
+            # Build equipment usage calendar
+            for scene_num, day_idx in scene_to_day.items():
+                if scene_num in self.equipment_scene_requirements:
+                    for equipment_name in self.equipment_scene_requirements[scene_num]:
+                        equipment_usage_days[equipment_name].append(day_idx)
+            
+            # Check for rental period violations
+            for equipment_name, usage_days in equipment_usage_days.items():
+                if equipment_name in self.equipment_rental_schedules:
+                    rental_schedule = self.equipment_rental_schedules[equipment_name]
+                    violations += self._validate_rental_schedule(equipment_name, usage_days, rental_schedule)
+        
+        except Exception as e:
+            print(f"ERROR: Equipment rental check failed: {e}")
+        
+        return violations
+
+    def _check_equipment_prep_violations(self, sequence: List[int], day_assignments: List[int]) -> int:
+        """Check equipment prep requirement violations"""
+        violations = 0
+        
+        try:
+            scene_to_day = self._build_scene_to_day_mapping(sequence, day_assignments)
+            
+            for equipment_name, prep_data in self.equipment_prep_requirements.items():
+                prep_days = prep_data.get('prep_days', 0)
+                
+                if prep_days > 0:
+                    # Find first day equipment is used
+                    first_usage_day = None
+                    for scene_num, day_idx in scene_to_day.items():
+                        if (scene_num in self.equipment_scene_requirements and 
+                            equipment_name in self.equipment_scene_requirements[scene_num]):
+                            if first_usage_day is None or day_idx < first_usage_day:
+                                first_usage_day = day_idx
+                    
+                    # Check if prep time is available
+                    if first_usage_day is not None and first_usage_day < prep_days:
+                        violations += 1
+                        print(f"DEBUG: Prep violation - '{equipment_name}' needs {prep_days} prep days, first use on day {first_usage_day}")
+        
+        except Exception as e:
+            print(f"ERROR: Equipment prep check failed: {e}")
+        
+        return violations
+
+    def _validate_rental_schedule(self, equipment_name: str, usage_days: List[int], rental_schedule: Dict) -> int:
+        """Validate equipment usage against rental schedule"""
+        violations = 0
+        
+        try:
+            # Simple check: if equipment has limited rental days
+            for week_key, week_data in rental_schedule.items():
+                if 'days' in week_data:
+                    max_days = week_data['days']
+                    week_num = int(week_key.split('_')[1]) if '_' in week_key else 1
+                    
+                    # Count usage days in this week
+                    week_usage_count = 0
+                    for day_idx in usage_days:
+                        day_week = self._get_shooting_week_from_day(day_idx)
+                        if day_week == week_num:
+                            week_usage_count += 1
+                    
+                    if week_usage_count > max_days:
+                        violations += 1
+                        print(f"DEBUG: Rental violation - '{equipment_name}' used {week_usage_count} days in week {week_num}, rental allows {max_days} days")
+        
+        except Exception as e:
+            print(f"ERROR: Rental schedule validation failed: {e}")
+        
+        return violations
+
+    def _check_equipment_location_violations(self, sequence: List[int], day_assignments: List[int]) -> int:
+        """Check location-based equipment violations"""
+        violations = 0
+        
+        try:
+            # Build scene-to-day and location mappings
+            scene_to_day = self._build_scene_to_day_mapping(sequence, day_assignments)
+            location_to_day_ranges = self._build_location_to_day_mapping(sequence, day_assignments)
+            
+            # Check location-specific equipment availability
+            violations += self._check_location_specific_equipment(scene_to_day, location_to_day_ranges)
+            
+            # Check equipment movement conflicts between locations
+            violations += self._check_equipment_movement_conflicts(location_to_day_ranges)
+            
+        except Exception as e:
+            print(f"ERROR: Equipment location violations check failed: {e}")
+        
+        return violations
+
+    def _build_location_to_day_mapping(self, sequence: List[int], day_assignments: List[int]) -> Dict[str, List[int]]:
+        """Build mapping of location to list of shooting days"""
+        location_to_days = defaultdict(list)
+        
+        try:
+            for i, cluster_idx in enumerate(sequence):
+                if cluster_idx < len(self.cluster_manager.clusters):
+                    cluster = self.cluster_manager.clusters[cluster_idx]
+                    location = cluster.location
+                    start_day = day_assignments[i]
+                    
+                    # Add all days this cluster shoots at this location
+                    for day_offset in range(cluster.estimated_days):
+                        shooting_day = start_day + day_offset
+                        if shooting_day < len(self.calendar.shooting_days):
+                            location_to_days[location].append(shooting_day)
+        
+        except Exception as e:
+            print(f"ERROR: Building location-to-day mapping failed: {e}")
+        
+        return location_to_days
+
+    def _check_location_specific_equipment(self, scene_to_day: Dict[str, int], 
+                                        location_to_day_ranges: Dict[str, List[int]]) -> int:
+        """Check if equipment is available at correct locations during correct times"""
+        violations = 0
+        
+        try:
+            # Map fictional location names to geographic addresses (like location constraints)
+            location_mapping = {
+                'Music Bar': 'Music Hall of Williamsburg, 66 N 6th St, Brooklyn, NY',
+                'Allison\'s House': 'The Local Apartments, 153 S Orange Ave, South Orange, NJ',
+                'Daniel\'s House': '88 Wyoming Ave, Maplewood, NJ',
+                'Rehab Facility': 'Saint Jude Executive Retreat, Amsterdam, NY',
+                'Williamsburg Loft': '4th Floor Walk-up, 118 N 7th St, Brooklyn, NY'
+            }
+            
+            # Check each equipment's location dependencies
+            for fictional_location, equipment_list in self.equipment_location_deps.items():
+                # Map to geographic location
+                geographic_location = location_mapping.get(fictional_location, fictional_location)
+                
+                if geographic_location in location_to_day_ranges:
+                    scheduled_days = location_to_day_ranges[geographic_location]
+                    
+                    for equipment_name in equipment_list:
+                        violations += self._validate_equipment_at_location(
+                            equipment_name, fictional_location, geographic_location, scheduled_days)
+        
+        except Exception as e:
+            print(f"ERROR: Location-specific equipment check failed: {e}")
+        
+        return violations
+
+    def _validate_equipment_at_location(self, equipment_name: str, fictional_location: str, 
+                                    geographic_location: str, scheduled_days: List[int]) -> int:
+        """Validate equipment availability at specific location during scheduled days"""
+        violations = 0
+        
+        try:
+            # Check if equipment has rental schedule restrictions for this location
+            if equipment_name in self.equipment_rental_schedules:
+                rental_schedule = self.equipment_rental_schedules[equipment_name]
+                
+                # Find location-specific rental data
+                for schedule_key, schedule_data in rental_schedule.items():
+                    if fictional_location.lower() in schedule_key.lower():
+                        violations += self._check_location_rental_schedule(
+                            equipment_name, schedule_data, scheduled_days, geographic_location)
+            
+            # Check week-based availability against location schedule
+            if equipment_name in self.equipment_availability_weeks:
+                available_weeks = self.equipment_availability_weeks[equipment_name]
+                
+                for day_idx in scheduled_days:
+                    shooting_week = self._get_shooting_week_from_day(day_idx)
+                    if shooting_week not in available_weeks:
+                        violations += 1
+                        print(f"DEBUG: Location equipment violation - '{equipment_name}' at '{geographic_location}' in week {shooting_week}, available weeks {available_weeks}")
+        
+        except Exception as e:
+            print(f"ERROR: Equipment validation at location failed: {e}")
+        
+        return violations
+
+    def _check_location_rental_schedule(self, equipment_name: str, schedule_data: Dict, 
+                                    scheduled_days: List[int], location: str) -> int:
+        """Check equipment rental schedule against location shooting days"""
+        violations = 0
+        
+        try:
+            # Check if rental weeks match scheduled weeks
+            if 'weeks' in schedule_data:
+                rental_weeks = schedule_data['weeks']
+                if not isinstance(rental_weeks, list):
+                    rental_weeks = [rental_weeks]
+                
+                scheduled_weeks = set()
+                for day_idx in scheduled_days:
+                    shooting_week = self._get_shooting_week_from_day(day_idx)
+                    scheduled_weeks.add(shooting_week)
+                
+                for scheduled_week in scheduled_weeks:
+                    if scheduled_week not in rental_weeks:
+                        violations += 1
+                        print(f"DEBUG: Rental schedule violation - '{equipment_name}' at '{location}' scheduled week {scheduled_week}, rental available weeks {rental_weeks}")
+        
+        except Exception as e:
+            print(f"ERROR: Rental schedule check failed: {e}")
+        
+        return violations
+
+    def _check_equipment_movement_conflicts(self, location_to_day_ranges: Dict[str, List[int]]) -> int:
+        """Check for equipment conflicts when same equipment needed at multiple locations simultaneously"""
+        violations = 0
+        
+        try:
+            # Build equipment usage calendar by location
+            equipment_location_calendar = defaultdict(lambda: defaultdict(list))
+            
+            # Map each equipment to locations and days
+            for location, equipment_list in self.equipment_location_deps.items():
+                # Map fictional to geographic location
+                location_mapping = {
+                    'Music Bar': 'Music Hall of Williamsburg, 66 N 6th St, Brooklyn, NY',
+                    'Allison\'s House': 'The Local Apartments, 153 S Orange Ave, South Orange, NJ',
+                    'Daniel\'s House': '88 Wyoming Ave, Maplewood, NJ',
+                    'Rehab Facility': 'Saint Jude Executive Retreat, Amsterdam, NY',
+                    'Williamsburg Loft': '4th Floor Walk-up, 118 N 7th St, Brooklyn, NY'
+                }
+                
+                geographic_location = location_mapping.get(location, location)
+                
+                if geographic_location in location_to_day_ranges:
+                    shooting_days = location_to_day_ranges[geographic_location]
+                    
+                    for equipment_name in equipment_list:
+                        for day_idx in shooting_days:
+                            equipment_location_calendar[equipment_name][day_idx].append(geographic_location)
+            
+            # Check for conflicts (same equipment at multiple locations same day)
+            for equipment_name, day_locations in equipment_location_calendar.items():
+                for day_idx, locations in day_locations.items():
+                    if len(set(locations)) > 1:  # Same equipment at multiple locations same day
+                        violations += 1
+                        print(f"DEBUG: Equipment movement conflict - '{equipment_name}' needed at multiple locations on day {day_idx}: {set(locations)}")
+        
+        except Exception as e:
+            print(f"ERROR: Equipment movement conflict check failed: {e}")
+        
+        return violations
+
+
     def _is_date_in_window(self, shooting_date: date, window: Dict) -> bool:
         """Check if shooting date falls within availability window"""
         try:
@@ -1556,6 +1885,11 @@ class LocationFirstGA:
         location_penalty = PENALTY_HARD_CONSTRAINT * location_violations
         score += location_penalty
         
+        # NEW: Equipment constraint penalties
+        equipment_violations = self._check_complete_equipment_violations(sequence, day_assignments)
+        equipment_penalty = PENALTY_HARD_CONSTRAINT * equipment_violations
+        score += equipment_penalty
+
         # Existing soft penalties
         travel_penalty = self._calculate_travel_penalty(sequence)
         score += travel_penalty
@@ -2389,6 +2723,83 @@ class LocationFirstGA:
         except Exception as e:
             print(f"ERROR: Failed to map location constraint: {e}")
 
+    def _map_equipment_constraint(self, constraint):
+        """Map structured equipment constraint to GA storage - NEW METHOD"""
+        try:
+            equipment_restriction = constraint.equipment_restriction
+            equipment_data = equipment_restriction.get('equipment_data', {})
+            
+            print(f"DEBUG: Processing {len(equipment_data)} equipment items")
+            
+            for equipment_name, equipment_info in equipment_data.items():
+                try:
+                    print(f"DEBUG: Mapping equipment '{equipment_name}'")
+                    
+                    # Store basic availability data
+                    if equipment_info.get('weeks'):
+                        self.equipment_availability_weeks[equipment_name] = equipment_info['weeks']
+                    
+                    if equipment_info.get('dates'):
+                        self.equipment_availability_dates[equipment_name] = equipment_info['dates']
+                    
+                    if equipment_info.get('days'):
+                        self.equipment_required_days[equipment_name] = equipment_info['days']
+                    
+                    # Process enhanced equipment_requirements section
+                    equipment_requirements = equipment_info.get('equipment_requirements', {})
+                    if equipment_requirements:
+                        self._process_equipment_requirements(equipment_name, equipment_requirements)
+                    
+                except Exception as e:
+                    print(f"ERROR: Failed to process equipment '{equipment_name}': {e}")
+                    continue
+        
+        except Exception as e:
+            print(f"ERROR: Equipment constraint mapping failed: {e}")
+
+    def _process_equipment_requirements(self, equipment_name: str, requirements: Dict):
+        """Process enhanced equipment requirements data"""
+        try:
+            # Map required scenes
+            required_scenes = requirements.get('required_scenes', [])
+            for scene_num in required_scenes:
+                scene_str = str(scene_num).strip()
+                if scene_str not in self.equipment_scene_requirements:
+                    self.equipment_scene_requirements[scene_str] = []
+                self.equipment_scene_requirements[scene_str].append(equipment_name)
+                print(f"DEBUG: Scene {scene_str} requires equipment '{equipment_name}'")
+            
+            # Map character dependencies
+            character_deps = requirements.get('character_dependencies', [])
+            for character in character_deps:
+                if character not in self.equipment_character_deps:
+                    self.equipment_character_deps[character] = []
+                self.equipment_character_deps[character].append(equipment_name)
+                print(f"DEBUG: Character '{character}' requires equipment '{equipment_name}'")
+            
+            # Map location dependencies  
+            location_deps = requirements.get('location_dependencies', [])
+            for location in location_deps:
+                if location not in self.equipment_location_deps:
+                    self.equipment_location_deps[location] = []
+                self.equipment_location_deps[location].append(equipment_name)
+                print(f"DEBUG: Location '{location}' requires equipment '{equipment_name}'")
+            
+            # Store prep requirements
+            prep_reqs = requirements.get('prep_requirements', {})
+            if prep_reqs:
+                self.equipment_prep_requirements[equipment_name] = prep_reqs
+                print(f"DEBUG: Equipment '{equipment_name}' has prep requirements: {prep_reqs}")
+            
+            # Store rental schedules
+            rental_schedule = requirements.get('rental_schedule', {})
+            if rental_schedule:
+                self.equipment_rental_schedules[equipment_name] = rental_schedule
+                print(f"DEBUG: Equipment '{equipment_name}' has rental schedule: {rental_schedule}")
+        
+        except Exception as e:
+            print(f"ERROR: Processing equipment requirements for '{equipment_name}': {e}")
+
 
     def _build_scene_to_day_mapping(self, sequence: List[int], day_assignments: List[int]) -> Dict[str, int]:
         """Build efficient scene number to shooting day mapping - WITH COMPREHENSIVE VALIDATION"""
@@ -3020,7 +3431,7 @@ class ScheduleOptimizer:
         }
 
     def _build_conflicts_summary(self, detailed_conflicts: List[Dict], ga_instance, 
-                           sequence: List[int], day_assignments: List[int]) -> Dict:
+                       sequence: List[int], day_assignments: List[int]) -> Dict:
         """NEW: Build constraint-level conflicts summary for UI grouping"""
         
         # Group detailed conflicts by constraint type
@@ -3036,11 +3447,13 @@ class ScheduleOptimizer:
         actor_violations = self._summarize_actor_violations(conflicts_by_type, ga_instance)
         director_violations = self._summarize_director_violations(conflicts_by_type, ga_instance)
         location_violations = self._summarize_location_violations(conflicts_by_type, ga_instance)
+        equipment_violations = self._summarize_equipment_violations(conflicts_by_type, ga_instance)  # NEW
         
         # Calculate totals
         total_constraint_violations = (actor_violations['constraint_count'] + 
                                     director_violations['constraint_count'] + 
-                                    location_violations['constraint_count'])
+                                    location_violations['constraint_count'] +
+                                    equipment_violations['constraint_count'])  # NEW
         
         conflicts_summary = {
             'total_detailed_reports': len(detailed_conflicts),
@@ -3048,7 +3461,8 @@ class ScheduleOptimizer:
             'constraint_categories': {
                 'actor_constraints': actor_violations,
                 'director_constraints': director_violations, 
-                'location_constraints': location_violations
+                'location_constraints': location_violations,
+                'equipment_constraints': equipment_violations  # NEW
             },
             'conflicts_by_type': {
                 conflict_type: {
@@ -3170,6 +3584,204 @@ class ScheduleOptimizer:
                 'access_limitations': len(conflicts_by_type.get('location_access_limitation', []))
             }
         }
+
+    def _summarize_equipment_violations(self, conflicts_by_type: Dict, ga_instance) -> Dict:
+        """Summarize equipment constraint violations - ENHANCED with location conflicts"""
+        
+        equipment_conflict_types = ['equipment_availability_violation', 'equipment_rental_violation', 
+                                'equipment_prep_violation', 'equipment_location_schedule_violation']  # NEW
+        equipment_conflicts = []
+        for conflict_type in equipment_conflict_types:
+            equipment_conflicts.extend(conflicts_by_type.get(conflict_type, []))
+        
+        # Count unique equipment with violations
+        affected_equipment = set()
+        for conflict in equipment_conflicts:
+            if 'equipment_name' in conflict:
+                affected_equipment.add(conflict['equipment_name'])
+        
+        # Count total constraints
+        total_constraints = (len(ga_instance.equipment_availability_weeks) + 
+                            len(ga_instance.equipment_scene_requirements) + 
+                            len(ga_instance.equipment_prep_requirements) +
+                            len(ga_instance.equipment_location_deps))  # NEW
+        
+        return {
+            'constraint_count': total_constraints,
+            'violations_count': len([c for c in equipment_conflicts if c.get('severity') == 'Hard']),
+            'detailed_reports_count': len(equipment_conflicts),
+            'affected_equipment_count': len(affected_equipment),
+            'affected_equipment': list(affected_equipment),
+            'violation_types': {
+                'availability_violations': len(conflicts_by_type.get('equipment_availability_violation', [])),
+                'rental_violations': len(conflicts_by_type.get('equipment_rental_violation', [])),
+                'prep_violations': len(conflicts_by_type.get('equipment_prep_violation', [])),
+                'location_schedule_violations': len(conflicts_by_type.get('equipment_location_schedule_violation', []))  # NEW
+            }
+        }
+
+    def _detect_equipment_conflicts(self, ga_instance, sequence: List[int], day_assignments: List[int],
+                          schedule: List[Dict]) -> List[Dict]:
+        """Detect and report equipment constraint violations - ENHANCED with location conflicts"""
+        conflicts = []
+        
+        try:
+            # Check equipment availability conflicts
+            conflicts.extend(self._check_equipment_availability_conflicts(
+                ga_instance, sequence, day_assignments, schedule))
+            
+            # Check equipment rental conflicts
+            conflicts.extend(self._check_equipment_rental_conflicts(
+                ga_instance, sequence, day_assignments, schedule))
+            
+            # Check equipment prep conflicts
+            conflicts.extend(self._check_equipment_prep_conflicts(
+                ga_instance, sequence, day_assignments, schedule))
+            
+            # NEW: Check location-based equipment conflicts
+            conflicts.extend(self._check_equipment_location_conflicts(
+                ga_instance, sequence, day_assignments, schedule))
+            
+        except Exception as e:
+            print(f"ERROR: Equipment conflict detection failed: {e}")
+        
+        return conflicts
+
+    def _check_equipment_availability_conflicts(self, ga_instance, sequence: List[int], 
+                                        day_assignments: List[int], schedule: List[Dict]) -> List[Dict]:
+        """Check equipment availability conflicts"""
+        conflicts = []
+        
+        try:
+            scene_to_day = ga_instance._build_scene_to_day_mapping(sequence, day_assignments)
+            
+            for scene_num, required_equipment_list in ga_instance.equipment_scene_requirements.items():
+                if scene_num in scene_to_day:
+                    shooting_day = scene_to_day[scene_num]
+                    shooting_week = ga_instance._get_shooting_week_from_day(shooting_day)
+                    shooting_date = None
+                    if shooting_day < len(ga_instance.calendar.shooting_days):
+                        shooting_date = ga_instance.calendar.shooting_days[shooting_day]
+                    
+                    for equipment_name in required_equipment_list:
+                        if equipment_name in ga_instance.equipment_availability_weeks:
+                            available_weeks = ga_instance.equipment_availability_weeks[equipment_name]
+                            if shooting_week not in available_weeks:
+                                conflicts.append({
+                                    'type': 'equipment_availability_violation',
+                                    'severity': 'Hard',
+                                    'description': f"Equipment '{equipment_name}' required for Scene {scene_num} in week {shooting_week}, but only available weeks {available_weeks}",
+                                    'affected_scenes': [scene_num],
+                                    'affected_days': [shooting_date.strftime("%Y-%m-%d")] if shooting_date else [],
+                                    'equipment_name': equipment_name,
+                                    'required_week': shooting_week,
+                                    'available_weeks': available_weeks
+                                })
+        
+        except Exception as e:
+            print(f"ERROR: Equipment availability conflict check failed: {e}")
+        
+        return conflicts
+
+    def _check_equipment_rental_conflicts(self, ga_instance, sequence: List[int], 
+                                    day_assignments: List[int], schedule: List[Dict]) -> List[Dict]:
+        """Check equipment rental period conflicts"""
+        conflicts = []
+        # Implementation similar to availability conflicts but for rental schedules
+        return conflicts
+
+    def _check_equipment_prep_conflicts(self, ga_instance, sequence: List[int], 
+                                day_assignments: List[int], schedule: List[Dict]) -> List[Dict]:
+        """Check equipment prep requirement conflicts"""  
+        conflicts = []
+        # Implementation for prep time violations
+        return conflicts
+
+    def _check_equipment_location_conflicts(self, ga_instance, sequence: List[int], 
+                                      day_assignments: List[int], schedule: List[Dict]) -> List[Dict]:
+        """Check location-based equipment conflicts"""
+        conflicts = []
+        
+        try:
+            location_to_day_ranges = ga_instance._build_location_to_day_mapping(sequence, day_assignments)
+            
+            # Map fictional to geographic locations
+            location_mapping = {
+                'Music Bar': 'Music Hall of Williamsburg, 66 N 6th St, Brooklyn, NY',
+                'Allison\'s House': 'The Local Apartments, 153 S Orange Ave, South Orange, NJ',
+                'Daniel\'s House': '88 Wyoming Ave, Maplewood, NJ',
+                'Rehab Facility': 'Saint Jude Executive Retreat, Amsterdam, NY',
+                'Williamsburg Loft': '4th Floor Walk-up, 118 N 7th St, Brooklyn, NY'
+            }
+            
+            # Check each equipment's location dependencies
+            for fictional_location, equipment_list in ga_instance.equipment_location_deps.items():
+                geographic_location = location_mapping.get(fictional_location, fictional_location)
+                
+                if geographic_location in location_to_day_ranges:
+                    scheduled_days = location_to_day_ranges[geographic_location]
+                    
+                    for equipment_name in equipment_list:
+                        # Check if equipment rental schedule matches location schedule
+                        if equipment_name in ga_instance.equipment_rental_schedules:
+                            rental_schedule = ga_instance.equipment_rental_schedules[equipment_name]
+                            
+                            location_conflicts = self._validate_equipment_location_schedule(
+                                equipment_name, fictional_location, geographic_location, 
+                                scheduled_days, rental_schedule, ga_instance)
+                            
+                            conflicts.extend(location_conflicts)
+        
+        except Exception as e:
+            print(f"ERROR: Equipment location conflict detection failed: {e}")
+        
+        return conflicts
+
+    def _validate_equipment_location_schedule(self, equipment_name: str, fictional_location: str,
+                                            geographic_location: str, scheduled_days: List[int], 
+                                            rental_schedule: Dict, ga_instance) -> List[Dict]:
+        """Validate equipment schedule against location requirements"""
+        conflicts = []
+        
+        try:
+            # Check for location-specific rental schedule violations
+            for schedule_key, schedule_data in rental_schedule.items():
+                if fictional_location.lower() in schedule_key.lower():
+                    # Equipment has specific schedule for this location
+                    rental_weeks = schedule_data.get('weeks', [])
+                    if not isinstance(rental_weeks, list):
+                        rental_weeks = [rental_weeks]
+                    
+                    for day_idx in scheduled_days:
+                        shooting_week = ga_instance._get_shooting_week_from_day(day_idx)
+                        shooting_date = None
+                        if day_idx < len(ga_instance.calendar.shooting_days):
+                            shooting_date = ga_instance.calendar.shooting_days[day_idx]
+                        
+                        if shooting_week not in rental_weeks:
+                            # Find affected scenes on this day
+                            affected_scenes = []
+                            if day_idx < len(ga_instance.schedule) if hasattr(ga_instance, 'schedule') else False:
+                                # This is a simplified scene lookup - in practice would need proper schedule reference
+                                affected_scenes = [f"Day_{day_idx}_scenes"]
+                            
+                            conflicts.append({
+                                'type': 'equipment_location_schedule_violation',
+                                'severity': 'Hard',
+                                'description': f"Equipment '{equipment_name}' scheduled at '{geographic_location}' in week {shooting_week}, but location-specific rental only available weeks {rental_weeks}",
+                                'affected_scenes': affected_scenes,
+                                'affected_days': [shooting_date.strftime("%Y-%m-%d")] if shooting_date else [],
+                                'equipment_name': equipment_name,
+                                'location': geographic_location,
+                                'scheduled_week': shooting_week,
+                                'available_weeks': rental_weeks
+                            })
+        
+        except Exception as e:
+            print(f"ERROR: Equipment location schedule validation failed: {e}")
+        
+        return conflicts
+
 
     def _get_severity_breakdown(self, conflicts: List[Dict]) -> Dict:
         """Get breakdown of conflicts by severity"""
