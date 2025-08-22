@@ -10,13 +10,15 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta, date, time
 import re
 import json
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
 import hashlib
+
+
 
 app = FastAPI(title="Location-First Film Schedule Optimizer v4.0")
 
@@ -107,7 +109,7 @@ class StructuredConstraintParser:
     """Parses structured constraints from n8n AI agents"""
     
     def __init__(self):
-        # Initialize parsing diagnostics for error handling and Step C1
+        # Existing parsing diagnostics
         self.parsing_stats = {
             'structured_v2_count': 0,
             'legacy_v1_count': 0, 
@@ -123,11 +125,30 @@ class StructuredConstraintParser:
                 'location_grouping': 0,
                 'unrecognized': 0
             },
-            'failed_constraints': []  # Store details of failed constraints
+            'failed_constraints': []
         }
-    
-        # Initialize constraints list for validation
+        
+        # Initialize constraints list
         self.constraints = []
+        
+        # NEW: Location constraint parsing statistics
+        self.location_parsing_stats = {
+            'total_location_constraints': 0,
+            'availability_windows_parsed': 0,
+            'access_restrictions_parsed': 0,
+            'environmental_factors_parsed': 0,
+            'parsing_failures': 0,
+            'constraint_categories': {
+                'Availability': 0,
+                'Sound': 0,
+                'Power': 0,
+                'Parking': 0,
+                'Access': 0,
+                'Lighting': 0,
+                'General Notes': 0,
+                'Other': 0
+            }
+        }
     
     def parse_all_constraints(self, constraints_dict: Dict[str, Any]) -> List[Constraint]:
         """Parse all structured constraint groups from n8n - ENHANCED Phase A logging"""
@@ -242,55 +263,118 @@ class StructuredConstraintParser:
         return constraints
     
     def _parse_location_constraints(self, location_data: Dict) -> List[Constraint]:
-        """Parse location availability and travel time constraints"""
+        """Parse location availability and travel time constraints - ENHANCED Phase A"""
         constraints = []
         
         try:
-            # Parse location availability
+            # Parse location availability with enhanced structured parsing
             if 'locations' in location_data:
                 locations_info = location_data['locations']
                 
                 if isinstance(locations_info, dict):
                     for location_name, location_info in locations_info.items():
-                        if isinstance(location_info, dict) and 'constraints' in location_info:
-                            for constraint_info in location_info['constraints']:
-                                if isinstance(constraint_info, dict):
-                                    constraint_level = constraint_info.get('constraint_level', 'Hard')
-                                    constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
-                                    
-                                    constraints.append(Constraint(
-                                        source=ConstraintPriority.LOCATION,
-                                        type=constraint_type,
-                                        description=f"{location_name}: {constraint_info.get('details', '')}",
-                                        affected_scenes=[],
-                                        location_restriction={
-                                            'location': location_name,
-                                            'category': constraint_info.get('category'),
-                                            'details': constraint_info.get('details')
-                                        }
-                                    ))
+                        try:
+                            if isinstance(location_info, dict) and 'constraints' in location_info:
+                                location_constraints = location_info['constraints']
+                                
+                                if isinstance(location_constraints, list):
+                                    for constraint_info in location_constraints:
+                                        try:
+                                            if isinstance(constraint_info, dict):
+                                                # Track parsing attempt
+                                                self.location_parsing_stats['total_location_constraints'] += 1
+                                                
+                                                # Extract basic constraint info
+                                                raw_category = constraint_info.get('category', 'Other')
+                                                details = constraint_info.get('details', '')
+                                                constraint_level = constraint_info.get('constraint_level', 'Hard')
+                                                
+                                                # Categorize constraint type
+                                                structured_category = self._categorize_location_constraint(raw_category, details)
+                                                self.location_parsing_stats['constraint_categories'][structured_category] += 1
+                                                
+                                                # Parse structured data based on category
+                                                parsed_data = self._parse_location_constraint_details(structured_category, details)
+                                                
+                                                # Track parsing success
+                                                if parsed_data.get('parsed_successfully'):
+                                                    if structured_category == 'Availability':
+                                                        self.location_parsing_stats['availability_windows_parsed'] += 1
+                                                    elif structured_category in ['Sound', 'Power', 'Parking', 'Access']:
+                                                        self.location_parsing_stats['access_restrictions_parsed'] += 1
+                                                    elif structured_category in ['Lighting', 'General Notes']:
+                                                        self.location_parsing_stats['environmental_factors_parsed'] += 1
+                                                else:
+                                                    self.location_parsing_stats['parsing_failures'] += 1
+                                                
+                                                # Create enhanced constraint object
+                                                constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+                                                
+                                                constraint = self._create_safe_constraint(
+                                                    source=ConstraintPriority.LOCATION,
+                                                    constraint_type=constraint_type,
+                                                    description=f"{location_name}: {details}",
+                                                    affected_scenes=[],
+                                                    location_restriction={
+                                                        'location': location_name,
+                                                        'category': structured_category,
+                                                        'raw_category': raw_category,
+                                                        'details': details,
+                                                        'parsed_data': parsed_data  # NEW: Structured parsed data
+                                                    }
+                                                )
+                                                
+                                                if constraint:
+                                                    constraints.append(constraint)
+                                                    print(f"DEBUG: Parsed {structured_category} constraint for {location_name}: {parsed_data.get('summary', 'No summary')}")
+                                        
+                                        except Exception as e:
+                                            print(f"ERROR: Failed to parse location constraint for {location_name}: {e}")
+                                            self.location_parsing_stats['parsing_failures'] += 1
+                                            continue
+                        
+                        except Exception as e:
+                            print(f"ERROR: Failed to process location {location_name}: {e}")
+                            continue
             
-            # Parse travel times
+            # Parse travel times (existing logic with error handling)
             if 'travel_times' in location_data:
                 travel_data = location_data['travel_times']
                 
                 if isinstance(travel_data, list):
                     for travel_info in travel_data:
-                        if isinstance(travel_info, dict):
-                            constraints.append(Constraint(
-                                source=ConstraintPriority.LOCATION,
-                                type=ConstraintType.SOFT,
-                                description=f"Travel time: {travel_info.get('estimated_travel_time_minutes', 0)} minutes",
-                                affected_scenes=[],
-                                location_restriction={
-                                    'from_location': travel_info.get('from_location_fictional', ''),
-                                    'to_location': travel_info.get('to_location_fictional', ''),
-                                    'travel_time_minutes': travel_info.get('estimated_travel_time_minutes', 0)
-                                }
-                            ))
+                        try:
+                            if isinstance(travel_info, dict):
+                                constraint = self._create_safe_constraint(
+                                    source=ConstraintPriority.LOCATION,
+                                    constraint_type=ConstraintType.SOFT,
+                                    description=f"Travel time: {travel_info.get('estimated_travel_time_minutes', 0)} minutes",
+                                    affected_scenes=[],
+                                    location_restriction={
+                                        'from_location': travel_info.get('from_location_fictional', ''),
+                                        'to_location': travel_info.get('to_location_fictional', ''),
+                                        'travel_time_minutes': travel_info.get('estimated_travel_time_minutes', 0),
+                                        'category': 'Travel',
+                                        'parsed_data': {
+                                            'constraint_type': 'travel_time',
+                                            'travel_minutes': travel_info.get('estimated_travel_time_minutes', 0),
+                                            'parsed_successfully': True
+                                        }
+                                    }
+                                )
+                                
+                                if constraint:
+                                    constraints.append(constraint)
+                        
+                        except Exception as e:
+                            print(f"ERROR: Failed to parse travel time constraint: {e}")
+                            continue
         
         except Exception as e:
-            print(f"DEBUG: Error parsing location constraints: {e}")
+            print(f"ERROR: Location constraints parsing failed: {e}")
+        
+        # Print parsing statistics
+        self._print_location_parsing_stats()
         
         return constraints
     
@@ -723,6 +807,475 @@ class StructuredConstraintParser:
         except Exception as e:
             print(f"ERROR: Failed to create constraint: {e}")
             return None
+
+    def _parse_date_range(self, details_text: str) -> Dict[str, Any]:
+        """Extract date ranges from location constraint details"""
+        date_info = {
+            'has_date_restriction': False,
+            'start_date': None,
+            'end_date': None,
+            'restricted_dates': [],
+            'available_dates': []
+        }
+        
+        try:
+            # Pattern 1: "Available Sept 22-24" or "Available from Sept 22 to Sept 24"
+            date_range_patterns = [
+                r'available\s+(?:from\s+)?(\w+\s+\d+)(?:\s*-\s*|\s+to\s+)(\w+\s+\d+)',
+                r'available\s+(\w+\s+\d+)\s*-\s*(\w+\s+\d+)',
+                r'(\w+\s+\d+)\s*-\s*(\w+\s+\d+)\s+only',
+                r'from\s+(\w+\s+\d+)\s+to\s+(\w+\s+\d+)'
+            ]
+            
+            for pattern in date_range_patterns:
+                match = re.search(pattern, details_text.lower())
+                if match:
+                    start_str, end_str = match.groups()
+                    start_date = self._parse_date_string(start_str)
+                    end_date = self._parse_date_string(end_str)
+                    
+                    if start_date and end_date:
+                        date_info['has_date_restriction'] = True
+                        date_info['start_date'] = start_date.strftime("%Y-%m-%d")
+                        date_info['end_date'] = end_date.strftime("%Y-%m-%d")
+                        break
+            
+            # Pattern 2: "No access on Sept 25" or "Unavailable Sept 26-27"
+            restriction_patterns = [
+                r'no\s+(?:access|filming)\s+on\s+(\w+\s+\d+)',
+                r'unavailable\s+(\w+\s+\d+)(?:\s*-\s*(\w+\s+\d+))?',
+                r'closed\s+(\w+\s+\d+)'
+            ]
+            
+            for pattern in restriction_patterns:
+                matches = re.finditer(pattern, details_text.lower())
+                for match in matches:
+                    if match.group(2):  # Date range
+                        start_date = self._parse_date_string(match.group(1))
+                        end_date = self._parse_date_string(match.group(2))
+                        if start_date and end_date:
+                            current = start_date
+                            while current <= end_date:
+                                date_info['restricted_dates'].append(current.strftime("%Y-%m-%d"))
+                                current += timedelta(days=1)
+                    else:  # Single date
+                        restricted_date = self._parse_date_string(match.group(1))
+                        if restricted_date:
+                            date_info['restricted_dates'].append(restricted_date.strftime("%Y-%m-%d"))
+                    
+                    date_info['has_date_restriction'] = True
+            
+            # Pattern 3: "Available [specific dates]"
+            specific_date_patterns = [
+                r'available\s+(\w+\s+\d+(?:,\s*\w+\s+\d+)*)',
+                r'only\s+(\w+\s+\d+(?:,\s*\w+\s+\d+)*)\s+available'
+            ]
+            
+            for pattern in specific_date_patterns:
+                match = re.search(pattern, details_text.lower())
+                if match:
+                    date_list = match.group(1)
+                    for date_str in re.split(r',\s*', date_list):
+                        available_date = self._parse_date_string(date_str.strip())
+                        if available_date:
+                            date_info['available_dates'].append(available_date.strftime("%Y-%m-%d"))
+                            date_info['has_date_restriction'] = True
+        
+        except Exception as e:
+            print(f"WARNING: Date parsing failed for '{details_text}': {e}")
+        
+        return date_info
+
+    def _parse_time_restrictions(self, details_text: str) -> Dict[str, Any]:
+        """Extract time restrictions from location constraint details"""
+        time_info = {
+            'has_time_restriction': False,
+            'start_time': None,
+            'end_time': None,
+            'daily_hours': None,
+            'restricted_times': []
+        }
+        
+        try:
+            # Pattern 1: "07:00 to 20:00" or "7am-8pm" 
+            time_range_patterns = [
+                r'(\d{1,2}:\d{2})\s*(?:to|-)?\s*(\d{1,2}:\d{2})',
+                r'(\d{1,2}(?:am|pm))\s*(?:to|-)\s*(\d{1,2}(?:am|pm))',
+                r'from\s+(\d{1,2}:\d{2})\s+to\s+(\d{1,2}:\d{2})',
+                r'between\s+(\d{1,2}(?:am|pm))\s+and\s+(\d{1,2}(?:am|pm))'
+            ]
+            
+            for pattern in time_range_patterns:
+                match = re.search(pattern, details_text.lower())
+                if match:
+                    start_time_str, end_time_str = match.groups()
+                    start_time = self._parse_time_string(start_time_str)
+                    end_time = self._parse_time_string(end_time_str)
+                    
+                    if start_time and end_time:
+                        time_info['has_time_restriction'] = True
+                        time_info['start_time'] = start_time.strftime("%H:%M")
+                        time_info['end_time'] = end_time.strftime("%H:%M")
+                        
+                        # Calculate daily hours
+                        start_datetime = datetime.combine(date.today(), start_time)
+                        end_datetime = datetime.combine(date.today(), end_time)
+                        if end_datetime < start_datetime:  # Next day
+                            end_datetime += timedelta(days=1)
+                        duration = end_datetime - start_datetime
+                        time_info['daily_hours'] = duration.total_seconds() / 3600
+                        break
+            
+            # Pattern 2: "No filming after 10pm" or "Noisy in the mornings"
+            restriction_patterns = [
+                r'no\s+filming\s+(?:after|past)\s+(\d{1,2}(?::\d{2})?(?:am|pm)?)',
+                r'no\s+access\s+(?:before|until)\s+(\d{1,2}(?::\d{2})?(?:am|pm)?)',
+                r'noisy\s+(?:in\s+the\s+)?(morning|afternoon|evening)s?',
+                r'busy\s+(?:from\s+)?(\d{1,2}(?::\d{2})?(?:am|pm)?)\s*-\s*(\d{1,2}(?::\d{2})?(?:am|pm)?)'
+            ]
+            
+            for pattern in restriction_patterns:
+                match = re.search(pattern, details_text.lower())
+                if match:
+                    time_info['has_time_restriction'] = True
+                    if 'morning' in match.group(0):
+                        time_info['restricted_times'].append({'period': 'morning', 'reason': 'noisy'})
+                    elif 'afternoon' in match.group(0):
+                        time_info['restricted_times'].append({'period': 'afternoon', 'reason': 'noisy'})
+                    elif 'evening' in match.group(0):
+                        time_info['restricted_times'].append({'period': 'evening', 'reason': 'noisy'})
+                    elif match.groups():
+                        time_info['restricted_times'].append({
+                            'time': match.group(1),
+                            'type': 'after' if 'after' in match.group(0) else 'before'
+                        })
+        
+        except Exception as e:
+            print(f"WARNING: Time parsing failed for '{details_text}': {e}")
+        
+        return time_info
+
+    def _parse_access_restrictions(self, details_text: str) -> Dict[str, Any]:
+        """Extract access and logistical restrictions"""
+        access_info = {
+            'has_access_restrictions': False,
+            'power_limitations': [],
+            'parking_restrictions': [],
+            'sound_issues': [],
+            'equipment_limitations': [],
+            'crew_size_limits': [],
+            'special_requirements': []
+        }
+        
+        try:
+            # Power restrictions
+            power_patterns = [
+                r'limited\s+(?:power|outlets|electricity)',
+                r'no\s+(?:power|electricity|outlets)',
+                r'generator\s+required',
+                r'power\s+(?:issues|problems|limitations)'
+            ]
+            
+            for pattern in power_patterns:
+                if re.search(pattern, details_text.lower()):
+                    access_info['has_access_restrictions'] = True
+                    access_info['power_limitations'].append(pattern.replace('\\s+', ' '))
+            
+            # Parking restrictions  
+            parking_patterns = [
+                r'(?:no|limited)\s+(?:crew\s+)?parking',
+                r'parking\s+(?:issues|restrictions|problems)',
+                r'no\s+(?:truck|vehicle)\s+access',
+                r'street\s+parking\s+only'
+            ]
+            
+            for pattern in parking_patterns:
+                if re.search(pattern, details_text.lower()):
+                    access_info['has_access_restrictions'] = True
+                    access_info['parking_restrictions'].append(pattern.replace('\\s+', ' '))
+            
+            # Sound issues
+            sound_patterns = [
+                r'(?:high\s+traffic|busy\s+road|noisy)',
+                r'sound\s+(?:issues|problems)',
+                r'(?:airplane|plane|aircraft)\s+noise',
+                r'construction\s+nearby'
+            ]
+            
+            for pattern in sound_patterns:
+                if re.search(pattern, details_text.lower()):
+                    access_info['has_access_restrictions'] = True
+                    access_info['sound_issues'].append(pattern.replace('\\s+', ' '))
+            
+            # Equipment limitations
+            equipment_patterns = [
+                r'no\s+(?:crane|dolly|steadicam)\s+access',
+                r'(?:stairs|narrow)\s+access\s+only',
+                r'equipment\s+(?:limitations|restrictions)',
+                r'small\s+crew\s+only'
+            ]
+            
+            for pattern in equipment_patterns:
+                if re.search(pattern, details_text.lower()):
+                    access_info['has_access_restrictions'] = True
+                    access_info['equipment_limitations'].append(pattern.replace('\\s+', ' '))
+            
+            # Crew size limits
+            crew_patterns = [
+                r'(?:small|minimal)\s+crew\s+only',
+                r'maximum\s+(\d+)\s+people',
+                r'crew\s+size\s+(?:limited|restricted)',
+                r'intimate\s+setting'
+            ]
+            
+            for pattern in crew_patterns:
+                match = re.search(pattern, details_text.lower())
+                if match:
+                    access_info['has_access_restrictions'] = True
+                    if match.groups():
+                        access_info['crew_size_limits'].append({'max_people': int(match.group(1))})
+                    else:
+                        access_info['crew_size_limits'].append({'restriction': pattern.replace('\\s+', ' ')})
+            
+            # Special requirements
+            special_patterns = [
+                r'(?:permit|permission)\s+required',
+                r'insurance\s+(?:required|needed)',
+                r'security\s+(?:required|needed)',
+                r'advance\s+(?:notice|booking)',
+                r'escort\s+required'
+            ]
+            
+            for pattern in special_patterns:
+                if re.search(pattern, details_text.lower()):
+                    access_info['has_access_restrictions'] = True
+                    access_info['special_requirements'].append(pattern.replace('\\s+', ' '))
+        
+        except Exception as e:
+            print(f"WARNING: Access restriction parsing failed for '{details_text}': {e}")
+        
+        return access_info
+
+
+    def _categorize_location_constraint(self, category: str, details: str) -> str:
+        """Categorize location constraint into structured type"""
+        
+        # Clean and normalize category
+        if not category:
+            category = "Other"
+        
+        category_lower = category.lower().strip()
+        details_lower = details.lower() if details else ""
+        
+        # Map categories to standardized types
+        if category_lower in ['availability', 'available', 'dates']:
+            return 'Availability'
+        elif category_lower in ['sound', 'noise', 'audio']:
+            return 'Sound'  
+        elif category_lower in ['power', 'electricity', 'electrical']:
+            return 'Power'
+        elif category_lower in ['parking', 'vehicles', 'access']:
+            return 'Parking'
+        elif category_lower in ['lighting', 'light', 'natural light']:
+            return 'Lighting'
+        elif category_lower in ['general notes', 'notes', 'general']:
+            return 'General Notes'
+        
+        # Content-based categorization if category is unclear
+        if any(word in details_lower for word in ['available', 'date', 'time', 'hour']):
+            return 'Availability'
+        elif any(word in details_lower for word in ['noisy', 'sound', 'traffic', 'quiet']):
+            return 'Sound'
+        elif any(word in details_lower for word in ['power', 'outlet', 'electricity', 'generator']):
+            return 'Power'
+        elif any(word in details_lower for word in ['parking', 'vehicle', 'truck', 'car']):
+            return 'Parking'
+        elif any(word in details_lower for word in ['access', 'entrance', 'stairs', 'narrow']):
+            return 'Access'
+        elif any(word in details_lower for word in ['light', 'lighting', 'morning', 'golden hour']):
+            return 'Lighting'
+        else:
+            return 'Other'
+
+
+    def _parse_date_string(self, date_str: str) -> Optional[date]:
+        """Parse various date string formats"""
+        if not date_str:
+            return None
+        
+        try:
+            # Clean the string
+            date_str = date_str.strip()
+            
+            # Common patterns with current year assumption
+            current_year = datetime.now().year
+            
+            patterns = [
+                ("%B %d", f"%B %d {current_year}"),      # "September 22" -> "September 22 2025"
+                ("%b %d", f"%b %d {current_year}"),      # "Sept 22" -> "Sept 22 2025"  
+                ("%m/%d", f"%m/%d/{current_year}"),      # "9/22" -> "9/22/2025"
+                ("%m-%d", f"%m-%d-{current_year}"),      # "9-22" -> "9-22-2025"
+                ("%Y-%m-%d", "%Y-%m-%d"),                # "2025-09-22"
+                ("%m/%d/%Y", "%m/%d/%Y"),                # "9/22/2025"
+                ("%B %d, %Y", "%B %d, %Y"),              # "September 22, 2025"
+            ]
+            
+            for input_pattern, full_pattern in patterns:
+                try:
+                    # Try to parse with full format first
+                    if input_pattern == full_pattern:
+                        return datetime.strptime(date_str, input_pattern).date()
+                    else:
+                        # Add current year and parse
+                        full_date_str = f"{date_str} {current_year}" if input_pattern.endswith(" %d") else date_str
+                        return datetime.strptime(full_date_str, full_pattern).date()
+                except ValueError:
+                    continue
+            
+            print(f"WARNING: Could not parse date string: '{date_str}'")
+            return None
+        
+        except Exception as e:
+            print(f"WARNING: Date parsing error for '{date_str}': {e}")
+            return None
+
+    def _parse_time_string(self, time_str: str) -> Optional[time]:
+        """Parse various time string formats"""
+        if not time_str:
+            return None
+        
+        try:
+            time_str = time_str.strip()
+            
+            patterns = [
+                "%H:%M",        # "14:30"
+                "%I:%M%p",      # "2:30PM"
+                "%I%p",         # "2PM"
+                "%H",           # "14"
+            ]
+            
+            for pattern in patterns:
+                try:
+                    return datetime.strptime(time_str.upper(), pattern).time()
+                except ValueError:
+                    continue
+            
+            print(f"WARNING: Could not parse time string: '{time_str}'")
+            return None
+    
+        except Exception as e:
+            print(f"WARNING: Time parsing error for '{time_str}': {e}")
+            return None
+
+    def _parse_location_constraint_details(self, category: str, details: str) -> Dict[str, Any]:
+        """Parse location constraint details into structured data"""
+        parsed_data = {
+            'constraint_type': category.lower(),
+            'parsed_successfully': False,
+            'summary': ''
+        }
+        
+        try:
+            if category == 'Availability':
+                # Parse availability windows
+                date_info = self._parse_date_range(details)
+                time_info = self._parse_time_restrictions(details)
+                
+                parsed_data.update({
+                    'date_restrictions': date_info,
+                    'time_restrictions': time_info,
+                    'parsed_successfully': date_info['has_date_restriction'] or time_info['has_time_restriction'],
+                    'summary': self._create_availability_summary(date_info, time_info)
+                })
+            
+            elif category in ['Sound', 'Power', 'Parking', 'Access']:
+                # Parse access restrictions
+                access_info = self._parse_access_restrictions(details)
+                time_info = self._parse_time_restrictions(details)  # Time-based restrictions
+                
+                parsed_data.update({
+                    'access_restrictions': access_info,
+                    'time_restrictions': time_info,
+                    'parsed_successfully': access_info['has_access_restrictions'] or time_info['has_time_restriction'],
+                    'summary': self._create_access_summary(category, access_info, time_info)
+                })
+            
+            else:
+                # Environmental factors and general notes
+                parsed_data.update({
+                    'raw_details': details,
+                    'parsed_successfully': bool(details.strip()),
+                    'summary': f"{category}: {details[:50]}..." if len(details) > 50 else f"{category}: {details}"
+                })
+        
+        except Exception as e:
+            print(f"WARNING: Failed to parse {category} constraint details '{details}': {e}")
+            parsed_data['error'] = str(e)
+        
+        return parsed_data
+
+    def _create_availability_summary(self, date_info: Dict, time_info: Dict) -> str:
+        """Create human-readable summary of availability constraints"""
+        summary_parts = []
+        
+        if date_info.get('start_date') and date_info.get('end_date'):
+            summary_parts.append(f"Available {date_info['start_date']} to {date_info['end_date']}")
+        elif date_info.get('available_dates'):
+            summary_parts.append(f"Available on specific dates: {', '.join(date_info['available_dates'][:3])}")
+        elif date_info.get('restricted_dates'):
+            summary_parts.append(f"Restricted dates: {', '.join(date_info['restricted_dates'][:3])}")
+        
+        if time_info.get('start_time') and time_info.get('end_time'):
+            summary_parts.append(f"Hours: {time_info['start_time']}-{time_info['end_time']}")
+            if time_info.get('daily_hours'):
+                summary_parts.append(f"({time_info['daily_hours']:.1f}h daily)")
+        
+        return "; ".join(summary_parts) if summary_parts else "Availability constraint"
+
+
+    def _create_access_summary(self, category: str, access_info: Dict, time_info: Dict) -> str:
+        """Create human-readable summary of access restrictions"""
+        summary_parts = [category]
+        
+        if category == 'Sound' and access_info.get('sound_issues'):
+            summary_parts.append(f"Issues: {', '.join(access_info['sound_issues'][:2])}")
+        elif category == 'Power' and access_info.get('power_limitations'):
+            summary_parts.append(f"Limitations: {', '.join(access_info['power_limitations'][:2])}")
+        elif category == 'Parking' and access_info.get('parking_restrictions'):
+            summary_parts.append(f"Restrictions: {', '.join(access_info['parking_restrictions'][:2])}")
+        
+        if time_info.get('restricted_times'):
+            summary_parts.append(f"Time restrictions: {len(time_info['restricted_times'])} periods")
+        
+        return "; ".join(summary_parts)
+
+
+    def _print_location_parsing_stats(self):
+        """Print location constraint parsing statistics"""
+        stats = self.location_parsing_stats
+        
+        print(f"\n" + "="*60)
+        print(f"STEP 2.5c PHASE A: LOCATION CONSTRAINT PARSING STATS")
+        print(f"="*60)
+        print(f"📍 Total location constraints processed: {stats['total_location_constraints']}")
+        print(f"✅ Availability windows parsed: {stats['availability_windows_parsed']}")
+        print(f"🚫 Access restrictions parsed: {stats['access_restrictions_parsed']}")  
+        print(f"🌤️ Environmental factors parsed: {stats['environmental_factors_parsed']}")
+        print(f"❌ Parsing failures: {stats['parsing_failures']}")
+        
+        if stats['total_location_constraints'] > 0:
+            success_rate = ((stats['total_location_constraints'] - stats['parsing_failures']) / 
+                        stats['total_location_constraints']) * 100
+            print(f"📊 Success rate: {success_rate:.1f}%")
+        
+        print(f"\n📋 Constraint categories:")
+        for category, count in stats['constraint_categories'].items():
+            if count > 0:
+                print(f"  • {category}: {count}")
+        
+        print(f"="*60)
+
+    
 
 class ShootingCalendar:
     """Manages shooting dates and availability"""
