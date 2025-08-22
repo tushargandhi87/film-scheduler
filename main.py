@@ -69,6 +69,7 @@ class Constraint:
     date_restriction: Optional[Dict] = None
     actor_restriction: Optional[Dict] = None
     location_restriction: Optional[Dict] = None
+    equipment_restriction: Optional[Dict] = None  # ADD THIS LINE
 
 @dataclass
 class LocationCluster:
@@ -375,14 +376,16 @@ class StructuredConstraintParser:
                         type=constraint_type,
                         description=f"{equipment_name}: {equipment_info.get('notes', '')}",
                         affected_scenes=[],
-                        location_restriction={
+                        equipment_restriction={
                             'equipment': equipment_name,
                             'rental_type': equipment_info.get('type'),
                             'available_weeks': equipment_info.get('weeks', []),
                             'available_dates': equipment_info.get('dates', []),
-                            'required_days': equipment_info.get('days')
+                            'required_days': equipment_info.get('days'),
+                            'equipment_requirements': equipment_info.get('equipment_requirements', {})
                         }
                     ))
+
             
             # Parse special scene requirements
             if 'special_requirements' in technical_data:
@@ -748,11 +751,13 @@ class StructuredConstraintParser:
             print(f"WARNING: Error validating constraint level '{level}': {e}, defaulting to Hard")
             return ConstraintType.HARD
 
+    
     def _create_safe_constraint(self, source: ConstraintPriority, constraint_type: ConstraintType, 
-                          description: str, affected_scenes: List[str], 
-                          date_restriction: Optional[Dict] = None,
-                          location_restriction: Optional[Dict] = None,
-                          actor_restriction: Optional[Dict] = None) -> Optional[Constraint]:
+                      description: str, affected_scenes: List[str], 
+                      date_restriction: Optional[Dict] = None,
+                      location_restriction: Optional[Dict] = None,
+                      actor_restriction: Optional[Dict] = None,
+                      equipment_restriction: Optional[Dict] = None) -> Optional[Constraint]:
         """Create constraint with validation - returns None if validation fails"""
         try:
             # Validate inputs
@@ -773,6 +778,7 @@ class StructuredConstraintParser:
                 except Exception as e:
                     print(f"WARNING: Invalid scene in affected_scenes '{scene}': {e}")
             
+            
             return Constraint(
                 source=source,
                 type=constraint_type,
@@ -780,7 +786,8 @@ class StructuredConstraintParser:
                 affected_scenes=safe_scenes,
                 date_restriction=date_restriction,
                 location_restriction=location_restriction,
-                actor_restriction=actor_restriction
+                actor_restriction=actor_restriction,
+                equipment_restriction=equipment_restriction
             )
         
         except Exception as e:
@@ -2732,69 +2739,43 @@ class LocationFirstGA:
     def _map_equipment_constraint(self, constraint):
         """Map structured equipment constraint to GA storage - FIXED METHOD"""
         try:
-            # Equipment constraints come through different paths, check all possibilities
-            equipment_data = None
-            
-            # Check if it's from technical_constraints (equipment section)
-            if hasattr(constraint, 'date_restriction') and constraint.date_restriction:
-                if 'equipment' in constraint.date_restriction:
-                    equipment_data = constraint.date_restriction['equipment']
-                elif 'equipment_data' in constraint.date_restriction:
-                    equipment_data = constraint.date_restriction['equipment_data']
-            
-            # Check if it's from location_restriction (sometimes equipment is location-based)
-            if not equipment_data and hasattr(constraint, 'location_restriction') and constraint.location_restriction:
-                if 'equipment' in constraint.location_restriction:
-                    equipment_data = constraint.location_restriction['equipment']
-            
-            # Check description for equipment info (fallback)
-            if not equipment_data and hasattr(constraint, 'description') and constraint.description:
-                # This would be from the technical_constraints parsing
-                if 'equipment' in constraint.description.lower():
-                    print(f"DEBUG: Found equipment constraint in description: {constraint.description}")
-                    # For now, skip parsing from description - need structured data
-                    return
-            
-            if not equipment_data:
-                print(f"DEBUG: No equipment data found in constraint: {constraint.description}")
+            # Equipment constraints now use equipment_restriction attribute
+            if not constraint.equipment_restriction:
+                print(f"DEBUG: No equipment_restriction found in constraint: {constraint.description}")
                 return
             
-            print(f"DEBUG: Processing equipment data: {equipment_data}")
+            equipment_restriction = constraint.equipment_restriction
+            equipment_name = equipment_restriction.get('equipment')
             
-            # If equipment_data is from technical_constraints, it might be nested
-            if isinstance(equipment_data, dict):
-                for equipment_name, equipment_info in equipment_data.items():
-                    try:
-                        print(f"DEBUG: Mapping equipment '{equipment_name}'")
-                        
-                        # Store basic availability data
-                        if equipment_info.get('weeks'):
-                            self.equipment_availability_weeks[equipment_name] = equipment_info['weeks']
-                            print(f"DEBUG: Equipment '{equipment_name}' available weeks: {equipment_info['weeks']}")
-                        
-                        if equipment_info.get('dates'):
-                            self.equipment_availability_dates[equipment_name] = equipment_info['dates']
-                            print(f"DEBUG: Equipment '{equipment_name}' available dates: {equipment_info['dates']}")
-                        
-                        if equipment_info.get('days'):
-                            self.equipment_required_days[equipment_name] = equipment_info['days']
-                            print(f"DEBUG: Equipment '{equipment_name}' required days: {equipment_info['days']}")
-                        
-                        # Process enhanced equipment_requirements section
-                        equipment_requirements = equipment_info.get('equipment_requirements', {})
-                        if equipment_requirements:
-                            self._process_equipment_requirements(equipment_name, equipment_requirements)
-                        else:
-                            print(f"DEBUG: No equipment_requirements found for '{equipment_name}'")
-                    
-                    except Exception as e:
-                        print(f"ERROR: Failed to process equipment '{equipment_name}': {e}")
-                        continue
+            if not equipment_name:
+                print(f"DEBUG: No equipment name found in constraint: {constraint.description}")
+                return
+            
+            print(f"DEBUG: Processing equipment '{equipment_name}' with restriction: {equipment_restriction}")
+            
+            # Store basic availability data
+            if equipment_restriction.get('available_weeks'):
+                self.equipment_availability_weeks[equipment_name] = equipment_restriction['available_weeks']
+                print(f"DEBUG: Equipment '{equipment_name}' available weeks: {equipment_restriction['available_weeks']}")
+            
+            if equipment_restriction.get('available_dates'):
+                self.equipment_availability_dates[equipment_name] = equipment_restriction['available_dates']
+                print(f"DEBUG: Equipment '{equipment_name}' available dates: {equipment_restriction['available_dates']}")
+            
+            if equipment_restriction.get('required_days'):
+                self.equipment_required_days[equipment_name] = equipment_restriction['required_days']
+                print(f"DEBUG: Equipment '{equipment_name}' required days: {equipment_restriction['required_days']}")
+            
+            # Process enhanced equipment_requirements section
+            equipment_requirements = equipment_restriction.get('equipment_requirements', {})
+            if equipment_requirements and isinstance(equipment_requirements, dict):
+                self._process_equipment_requirements(equipment_name, equipment_requirements)
+                print(f"DEBUG: Processed equipment requirements for '{equipment_name}': {equipment_requirements}")
             else:
-                print(f"DEBUG: Equipment data is not a dict: {type(equipment_data)}")
+                print(f"DEBUG: No equipment_requirements found for '{equipment_name}'")
         
         except Exception as e:
-            print(f"ERROR: Equipment constraint mapping failed: {e}")
+            print(f"ERROR: Equipment constraint mapping failed for '{constraint.description}': {e}")
             import traceback
             traceback.print_exc()
 
