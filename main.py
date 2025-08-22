@@ -3564,6 +3564,13 @@ class ScheduleOptimizer:
         """Detect and report location constraint violations"""
         conflicts = []
         
+        # DEBUG: Add this logging
+        print(f"DEBUG: Starting location conflict detection...")
+        print(f"DEBUG: Available constraints - Windows: {len(ga_instance.location_availability_windows)}, "
+            f"Time: {len(ga_instance.location_time_restrictions)}, "
+            f"Day: {len(ga_instance.location_day_restrictions)}, "
+            f"Access: {len(ga_instance.location_access_limitations)}")
+
         try:
             # Check availability window violations
             conflicts.extend(self._check_location_availability_conflicts(
@@ -3591,6 +3598,11 @@ class ScheduleOptimizer:
         """Check location availability window violations"""
         conflicts = []
         
+        # DEBUG: Add this logging
+        print(f"DEBUG: Checking availability violations for {len(ga_instance.location_availability_windows)} locations")
+        for location, windows in ga_instance.location_availability_windows.items():
+            print(f"DEBUG: Location '{location}' has {len(windows)} availability windows")
+
         try:
             for i, cluster_idx in enumerate(sequence):
                 if cluster_idx >= len(ga_instance.cluster_manager.clusters):
