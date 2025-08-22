@@ -1781,8 +1781,9 @@ class LocationFirstGA:
             reasoning = constraint.date_restriction.get('reasoning', '')
             locations = constraint.date_restriction.get('locations', [])
             
-            print(f"DEBUG: Processing structured director constraint: '{structured_type}' for scenes {affected_scenes}")
-            
+            #print(f"DEBUG: Processing structured director constraint: '{structured_type}' for scenes {affected_scenes}")
+            #Director constraint debugging stopped by Tushar on 22 August
+
             # Direct constraint type mapping (fast and reliable)
             if structured_type == 'shoot_first':
                 self.director_shoot_first.extend(affected_scenes)
@@ -2635,8 +2636,9 @@ class LocationFirstGA:
                 reasoning = constraint.date_restriction.get('reasoning', '')
                 locations = constraint.date_restriction.get('locations', [])
                 
-                print(f"DEBUG: Processing structured director constraint: '{structured_type}' for scenes {affected_scenes}")
-                
+                #print(f"DEBUG: Processing structured director constraint: '{structured_type}' for scenes {affected_scenes}")
+                #director constraint debugging stopped by tushar on 22 august
+
                 try:
                     # Direct constraint type mapping with validation
                     if structured_type == 'shoot_first':
