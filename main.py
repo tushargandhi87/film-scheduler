@@ -809,7 +809,7 @@ class StructuredConstraintParser:
             return None
 
     def _parse_date_range(self, details_text: str) -> Dict[str, Any]:
-        """Extract date ranges from location constraint details"""
+        """Extract date ranges from location constraint details - WITH ENHANCED DEBUGGING"""
         date_info = {
             'has_date_restriction': False,
             'start_date': None,
@@ -818,76 +818,86 @@ class StructuredConstraintParser:
             'available_dates': []
         }
         
+        # Store patterns tried for debugging
+        patterns_tried = []
+        
         try:
-            # Pattern 1: "Available Sept 22-24" or "Available from Sept 22 to Sept 24"
+            if not details_text:
+                return date_info
+            
+            text_lower = details_text.lower()
+            print(f"    DATE DEBUG: Analyzing text: '{text_lower}'")
+            
+            # ENHANCED: More flexible date range patterns
             date_range_patterns = [
-                r'available\s+(?:from\s+)?(\w+\s+\d+)(?:\s*-\s*|\s+to\s+)(\w+\s+\d+)',
-                r'available\s+(\w+\s+\d+)\s*-\s*(\w+\s+\d+)',
-                r'(\w+\s+\d+)\s*-\s*(\w+\s+\d+)\s+only',
-                r'from\s+(\w+\s+\d+)\s+to\s+(\w+\s+\d+)'
+                # Original patterns
+                (r'available\s+(?:from\s+)?(\w+\s+\d+)(?:\s*-\s*|\s+to\s+)(\w+\s+\d+)', 'available from X to Y'),
+                (r'available\s+(\w+\s+\d+)\s*-\s*(\w+\s+\d+)', 'available X-Y'),
+                (r'(\w+\s+\d+)\s*-\s*(\w+\s+\d+)\s+only', 'X-Y only'),
+                (r'from\s+(\w+\s+\d+)\s+to\s+(\w+\s+\d+)', 'from X to Y'),
+                
+                # NEW: More flexible patterns for real data
+                (r'available\s+(\d+/\d+)\s*-\s*(\d+/\d+)', 'available MM/DD-MM/DD'),
+                (r'(\d+/\d+)\s*-\s*(\d+/\d+)', 'MM/DD-MM/DD'),
+                (r'(\d{4}-\d{2}-\d{2})\s*(?:to|-)?\s*(\d{4}-\d{2}-\d{2})', 'YYYY-MM-DD to YYYY-MM-DD'),
+                (r'available\s+(\d{1,2}(?:st|nd|rd|th)?)\s*-\s*(\d{1,2}(?:st|nd|rd|th)?)', 'available Nth-Nth'),
+                
+                # Common variations
+                (r'(?:open|available|accessible)\s+(\w+\s+\d+)\s+(?:through|until|to)\s+(\w+\s+\d+)', 'open X through Y'),
+                (r'(\w+\s+\d+)\s+(?:through|until|to)\s+(\w+\s+\d+)\s+available', 'X through Y available'),
             ]
             
-            for pattern in date_range_patterns:
-                match = re.search(pattern, details_text.lower())
+            for pattern, description in date_range_patterns:
+                patterns_tried.append(description)
+                print(f"    DATE DEBUG: Trying pattern '{description}': {pattern}")
+                
+                match = re.search(pattern, text_lower)
                 if match:
                     start_str, end_str = match.groups()
+                    print(f"    DATE DEBUG: Pattern matched! Start: '{start_str}', End: '{end_str}'")
+                    
                     start_date = self._parse_date_string(start_str)
                     end_date = self._parse_date_string(end_str)
+                    
+                    print(f"    DATE DEBUG: Parsed dates - Start: {start_date}, End: {end_date}")
                     
                     if start_date and end_date:
                         date_info['has_date_restriction'] = True
                         date_info['start_date'] = start_date.strftime("%Y-%m-%d")
                         date_info['end_date'] = end_date.strftime("%Y-%m-%d")
+                        print(f"    DATE DEBUG: SUCCESS - Date range: {date_info['start_date']} to {date_info['end_date']}")
+                        break
+                    else:
+                        print(f"    DATE DEBUG: Date parsing failed for matched strings")
+                else:
+                    print(f"    DATE DEBUG: Pattern did not match")
+            
+            # Store debug info
+            self._last_date_patterns_tried = patterns_tried
+            
+            # Continue with restriction patterns (simplified for debugging)
+            if not date_info['has_date_restriction']:
+                print(f"    DATE DEBUG: No date range found, checking for restrictions...")
+                
+                # Look for specific restriction keywords
+                restriction_keywords = ['no access', 'unavailable', 'closed', 'restricted']
+                for keyword in restriction_keywords:
+                    if keyword in text_lower:
+                        print(f"    DATE DEBUG: Found restriction keyword: '{keyword}'")
+                        date_info['has_date_restriction'] = True
+                        # For now, just mark as having restrictions without detailed parsing
                         break
             
-            # Pattern 2: "No access on Sept 25" or "Unavailable Sept 26-27"
-            restriction_patterns = [
-                r'no\s+(?:access|filming)\s+on\s+(\w+\s+\d+)',
-                r'unavailable\s+(\w+\s+\d+)(?:\s*-\s*(\w+\s+\d+))?',
-                r'closed\s+(\w+\s+\d+)'
-            ]
-            
-            for pattern in restriction_patterns:
-                matches = re.finditer(pattern, details_text.lower())
-                for match in matches:
-                    if match.group(2):  # Date range
-                        start_date = self._parse_date_string(match.group(1))
-                        end_date = self._parse_date_string(match.group(2))
-                        if start_date and end_date:
-                            current = start_date
-                            while current <= end_date:
-                                date_info['restricted_dates'].append(current.strftime("%Y-%m-%d"))
-                                current += timedelta(days=1)
-                    else:  # Single date
-                        restricted_date = self._parse_date_string(match.group(1))
-                        if restricted_date:
-                            date_info['restricted_dates'].append(restricted_date.strftime("%Y-%m-%d"))
-                    
-                    date_info['has_date_restriction'] = True
-            
-            # Pattern 3: "Available [specific dates]"
-            specific_date_patterns = [
-                r'available\s+(\w+\s+\d+(?:,\s*\w+\s+\d+)*)',
-                r'only\s+(\w+\s+\d+(?:,\s*\w+\s+\d+)*)\s+available'
-            ]
-            
-            for pattern in specific_date_patterns:
-                match = re.search(pattern, details_text.lower())
-                if match:
-                    date_list = match.group(1)
-                    for date_str in re.split(r',\s*', date_list):
-                        available_date = self._parse_date_string(date_str.strip())
-                        if available_date:
-                            date_info['available_dates'].append(available_date.strftime("%Y-%m-%d"))
-                            date_info['has_date_restriction'] = True
+            print(f"    DATE DEBUG: Final result: {date_info}")
         
         except Exception as e:
-            print(f"WARNING: Date parsing failed for '{details_text}': {e}")
+            print(f"    DATE DEBUG ERROR: {e}")
+            date_info['error'] = str(e)
         
         return date_info
 
     def _parse_time_restrictions(self, details_text: str) -> Dict[str, Any]:
-        """Extract time restrictions from location constraint details"""
+        """Extract time restrictions from location constraint details - WITH ENHANCED DEBUGGING"""
         time_info = {
             'has_time_restriction': False,
             'start_time': None,
@@ -896,21 +906,64 @@ class StructuredConstraintParser:
             'restricted_times': []
         }
         
+        patterns_tried = []
+        
         try:
-            # Pattern 1: "07:00 to 20:00" or "7am-8pm" 
+            if not details_text:
+                return time_info
+            
+            text_lower = details_text.lower()
+            print(f"    TIME DEBUG: Analyzing text: '{text_lower}'")
+            
+            # ENHANCED: More flexible time patterns
             time_range_patterns = [
-                r'(\d{1,2}:\d{2})\s*(?:to|-)?\s*(\d{1,2}:\d{2})',
-                r'(\d{1,2}(?:am|pm))\s*(?:to|-)\s*(\d{1,2}(?:am|pm))',
-                r'from\s+(\d{1,2}:\d{2})\s+to\s+(\d{1,2}:\d{2})',
-                r'between\s+(\d{1,2}(?:am|pm))\s+and\s+(\d{1,2}(?:am|pm))'
+                # Original patterns
+                (r'(\d{1,2}:\d{2})\s*(?:to|-)?\s*(\d{1,2}:\d{2})', 'HH:MM to HH:MM'),
+                (r'(\d{1,2}(?:am|pm))\s*(?:to|-)\s*(\d{1,2}(?:am|pm))', 'Xam/pm to Yam/pm'),
+                (r'from\s+(\d{1,2}:\d{2})\s+to\s+(\d{1,2}:\d{2})', 'from HH:MM to HH:MM'),
+                (r'between\s+(\d{1,2}(?:am|pm))\s+and\s+(\d{1,2}(?:am|pm))', 'between Xam/pm and Yam/pm'),
+                
+                # NEW: Common real-world patterns
+                (r'(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})\s+only', 'HH:MM-HH:MM only'),
+                (r'hours?\s*:?\s*(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})', 'hours: HH:MM-HH:MM'),
+                (r'open\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})', 'open HH:MM-HH:MM'),
+                (r'access\s+(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})', 'access HH:MM-HH:MM'),
+                (r'(\d{1,2})\s*:\s*(\d{2})\s*-\s*(\d{1,2})\s*:\s*(\d{2})', 'H:MM-H:MM (split)'),
+                
+                # 12-hour format variations
+                (r'(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*-\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)', '12-hour format'),
             ]
             
-            for pattern in time_range_patterns:
-                match = re.search(pattern, details_text.lower())
+            for pattern, description in time_range_patterns:
+                patterns_tried.append(description)
+                print(f"    TIME DEBUG: Trying pattern '{description}': {pattern}")
+                
+                match = re.search(pattern, text_lower)
                 if match:
-                    start_time_str, end_time_str = match.groups()
+                    print(f"    TIME DEBUG: Pattern matched! Groups: {match.groups()}")
+                    
+                    # Handle different group patterns
+                    if description == '12-hour format':
+                        # Complex 12-hour parsing
+                        groups = match.groups()
+                        start_hour, start_min, start_period, end_hour, end_min, end_period = groups
+                        start_time_str = f"{start_hour}:{start_min or '00'}{start_period}"
+                        end_time_str = f"{end_hour}:{end_min or '00'}{end_period}"
+                    elif description == 'H:MM-H:MM (split)':
+                        # Split format
+                        h1, m1, h2, m2 = match.groups()
+                        start_time_str = f"{h1}:{m1}"
+                        end_time_str = f"{h2}:{m2}"
+                    else:
+                        # Standard format
+                        start_time_str, end_time_str = match.groups()[:2]
+                    
+                    print(f"    TIME DEBUG: Extracted times - Start: '{start_time_str}', End: '{end_time_str}'")
+                    
                     start_time = self._parse_time_string(start_time_str)
                     end_time = self._parse_time_string(end_time_str)
+                    
+                    print(f"    TIME DEBUG: Parsed times - Start: {start_time}, End: {end_time}")
                     
                     if start_time and end_time:
                         time_info['has_time_restriction'] = True
@@ -924,34 +977,34 @@ class StructuredConstraintParser:
                             end_datetime += timedelta(days=1)
                         duration = end_datetime - start_datetime
                         time_info['daily_hours'] = duration.total_seconds() / 3600
+                        
+                        print(f"    TIME DEBUG: SUCCESS - Time range: {time_info['start_time']}-{time_info['end_time']} ({time_info['daily_hours']:.1f}h)")
+                        break
+                    else:
+                        print(f"    TIME DEBUG: Time parsing failed for matched strings")
+                else:
+                    print(f"    TIME DEBUG: Pattern did not match")
+            
+            # Store debug info
+            self._last_time_patterns_tried = patterns_tried
+            
+            # Check for time-related keywords if no specific times found
+            if not time_info['has_time_restriction']:
+                print(f"    TIME DEBUG: No time range found, checking for time keywords...")
+                
+                time_keywords = ['morning', 'afternoon', 'evening', 'hours', 'time', 'am', 'pm']
+                for keyword in time_keywords:
+                    if keyword in text_lower:
+                        print(f"    TIME DEBUG: Found time keyword: '{keyword}'")
+                        time_info['has_time_restriction'] = True
+                        time_info['restricted_times'].append({'keyword': keyword, 'context': 'general'})
                         break
             
-            # Pattern 2: "No filming after 10pm" or "Noisy in the mornings"
-            restriction_patterns = [
-                r'no\s+filming\s+(?:after|past)\s+(\d{1,2}(?::\d{2})?(?:am|pm)?)',
-                r'no\s+access\s+(?:before|until)\s+(\d{1,2}(?::\d{2})?(?:am|pm)?)',
-                r'noisy\s+(?:in\s+the\s+)?(morning|afternoon|evening)s?',
-                r'busy\s+(?:from\s+)?(\d{1,2}(?::\d{2})?(?:am|pm)?)\s*-\s*(\d{1,2}(?::\d{2})?(?:am|pm)?)'
-            ]
-            
-            for pattern in restriction_patterns:
-                match = re.search(pattern, details_text.lower())
-                if match:
-                    time_info['has_time_restriction'] = True
-                    if 'morning' in match.group(0):
-                        time_info['restricted_times'].append({'period': 'morning', 'reason': 'noisy'})
-                    elif 'afternoon' in match.group(0):
-                        time_info['restricted_times'].append({'period': 'afternoon', 'reason': 'noisy'})
-                    elif 'evening' in match.group(0):
-                        time_info['restricted_times'].append({'period': 'evening', 'reason': 'noisy'})
-                    elif match.groups():
-                        time_info['restricted_times'].append({
-                            'time': match.group(1),
-                            'type': 'after' if 'after' in match.group(0) else 'before'
-                        })
+            print(f"    TIME DEBUG: Final result: {time_info}")
         
         except Exception as e:
-            print(f"WARNING: Time parsing failed for '{details_text}': {e}")
+            print(f"    TIME DEBUG ERROR: {e}")
+            time_info['error'] = str(e)
         
         return time_info
 
@@ -1099,118 +1152,201 @@ class StructuredConstraintParser:
 
 
     def _parse_date_string(self, date_str: str) -> Optional[date]:
-        """Parse various date string formats"""
+        """Parse various date string formats - ENHANCED with more patterns"""
         if not date_str:
             return None
         
         try:
             # Clean the string
             date_str = date_str.strip()
+            print(f"      DATE_STR DEBUG: Parsing '{date_str}'")
             
-            # Common patterns with current year assumption
+            # Current year assumption
             current_year = datetime.now().year
             
+            # ENHANCED: More comprehensive date patterns
             patterns = [
-                ("%B %d", f"%B %d {current_year}"),      # "September 22" -> "September 22 2025"
-                ("%b %d", f"%b %d {current_year}"),      # "Sept 22" -> "Sept 22 2025"  
-                ("%m/%d", f"%m/%d/{current_year}"),      # "9/22" -> "9/22/2025"
-                ("%m-%d", f"%m-%d-{current_year}"),      # "9-22" -> "9-22-2025"
+                # Existing patterns
+                ("%B %d", f"%B %d {current_year}"),      # "September 22"
+                ("%b %d", f"%b %d {current_year}"),      # "Sept 22"
+                ("%m/%d", f"%m/%d/{current_year}"),      # "9/22"
+                ("%m-%d", f"%m-%d-{current_year}"),      # "9-22"
                 ("%Y-%m-%d", "%Y-%m-%d"),                # "2025-09-22"
                 ("%m/%d/%Y", "%m/%d/%Y"),                # "9/22/2025"
                 ("%B %d, %Y", "%B %d, %Y"),              # "September 22, 2025"
+                
+                # NEW: Additional common patterns
+                ("%d/%m/%Y", "%d/%m/%Y"),                # "22/9/2025" (European)
+                ("%d-%m-%Y", "%d-%m-%Y"),                # "22-09-2025"
+                ("%Y/%m/%d", "%Y/%m/%d"),                # "2025/09/22"
+                ("%d %B", f"%d %B {current_year}"),     # "22 September"
+                ("%d %b", f"%d %b {current_year}"),     # "22 Sept"
+                ("%d", f"%d {datetime.now().strftime('%B %Y')}"),  # "22" (current month)
+                
+                # Month names
+                ("%B", f"%B 1 {current_year}"),         # "September" (1st of month)
+                ("%b", f"%b 1 {current_year}"),         # "Sept" (1st of month)
             ]
             
             for input_pattern, full_pattern in patterns:
                 try:
-                    # Try to parse with full format first
-                    if input_pattern == full_pattern:
-                        return datetime.strptime(date_str, input_pattern).date()
+                    print(f"      DATE_STR DEBUG: Trying pattern {input_pattern} -> {full_pattern}")
+                    
+                    # Handle current date additions
+                    if input_pattern == "%d":
+                        full_date_str = f"{date_str} {datetime.now().strftime('%B %Y')}"
+                        result = datetime.strptime(full_date_str, f"%d %B %Y").date()
+                    elif input_pattern in ["%B", "%b"]:
+                        full_date_str = f"{date_str} 1 {current_year}"
+                        result = datetime.strptime(full_date_str, full_pattern).date()
+                    elif input_pattern == full_pattern:
+                        result = datetime.strptime(date_str, input_pattern).date()
                     else:
-                        # Add current year and parse
-                        full_date_str = f"{date_str} {current_year}" if input_pattern.endswith(" %d") else date_str
-                        return datetime.strptime(full_date_str, full_pattern).date()
-                except ValueError:
+                        # Add current year for patterns that need it
+                        if input_pattern.endswith(" %d"):
+                            full_date_str = f"{date_str} {current_year}"
+                        else:
+                            full_date_str = date_str
+                        result = datetime.strptime(full_date_str, full_pattern).date()
+                    
+                    print(f"      DATE_STR DEBUG: SUCCESS with pattern {input_pattern}: {result}")
+                    return result
+                    
+                except ValueError as e:
+                    print(f"      DATE_STR DEBUG: Pattern {input_pattern} failed: {e}")
                     continue
             
-            print(f"WARNING: Could not parse date string: '{date_str}'")
+            print(f"      DATE_STR DEBUG: All patterns failed for '{date_str}'")
             return None
         
         except Exception as e:
-            print(f"WARNING: Date parsing error for '{date_str}': {e}")
+            print(f"      DATE_STR DEBUG ERROR: Date parsing error for '{date_str}': {e}")
             return None
 
     def _parse_time_string(self, time_str: str) -> Optional[time]:
-        """Parse various time string formats"""
+        """Parse various time string formats - ENHANCED with more patterns"""
         if not time_str:
             return None
         
         try:
-            time_str = time_str.strip()
+            time_str = time_str.strip().upper()
+            print(f"      TIME_STR DEBUG: Parsing '{time_str}'")
             
+            # ENHANCED: More comprehensive time patterns
             patterns = [
+                # Existing patterns
                 "%H:%M",        # "14:30"
                 "%I:%M%p",      # "2:30PM"
                 "%I%p",         # "2PM"
                 "%H",           # "14"
+                
+                # NEW: Additional patterns
+                "%I:%M %p",     # "2:30 PM" (with space)
+                "%I %p",        # "2 PM" (with space)
+                "%H.%M",        # "14.30" (European style)
+                "%H:%M:%S",     # "14:30:00" (with seconds)
+                "%I:%M:%S%p",   # "2:30:00PM"
             ]
             
             for pattern in patterns:
                 try:
-                    return datetime.strptime(time_str.upper(), pattern).time()
-                except ValueError:
+                    print(f"      TIME_STR DEBUG: Trying pattern {pattern}")
+                    result = datetime.strptime(time_str, pattern).time()
+                    print(f"      TIME_STR DEBUG: SUCCESS with pattern {pattern}: {result}")
+                    return result
+                except ValueError as e:
+                    print(f"      TIME_STR DEBUG: Pattern {pattern} failed: {e}")
                     continue
             
-            print(f"WARNING: Could not parse time string: '{time_str}'")
+            print(f"      TIME_STR DEBUG: All patterns failed for '{time_str}'")
             return None
-    
+        
         except Exception as e:
-            print(f"WARNING: Time parsing error for '{time_str}': {e}")
+            print(f"      TIME_STR DEBUG ERROR: Time parsing error for '{time_str}': {e}")
             return None
 
     def _parse_location_constraint_details(self, category: str, details: str) -> Dict[str, Any]:
-        """Parse location constraint details into structured data"""
+        """Parse location constraint details into structured data - WITH ENHANCED DEBUGGING"""
         parsed_data = {
             'constraint_type': category.lower(),
             'parsed_successfully': False,
-            'summary': ''
+            'summary': '',
+            'debug_info': {
+                'original_details': details,
+                'category': category,
+                'details_length': len(details) if details else 0
+            }
         }
         
         try:
+            # ENHANCED: Debug logging for all constraint details
+            print(f"DEBUG PHASE A: Parsing {category} constraint")
+            print(f"  Original details: '{details}'")
+            print(f"  Details length: {len(details) if details else 0}")
+            
             if category == 'Availability':
-                # Parse availability windows
+                # Parse availability windows with debug info
+                print(f"  → Parsing as AVAILABILITY constraint")
                 date_info = self._parse_date_range(details)
                 time_info = self._parse_time_restrictions(details)
+                
+                # Enhanced debug output
+                print(f"  → Date parsing result: {date_info}")
+                print(f"  → Time parsing result: {time_info}")
+                
+                parsed_successfully = date_info['has_date_restriction'] or time_info['has_time_restriction']
+                print(f"  → Parsed successfully: {parsed_successfully}")
                 
                 parsed_data.update({
                     'date_restrictions': date_info,
                     'time_restrictions': time_info,
-                    'parsed_successfully': date_info['has_date_restriction'] or time_info['has_time_restriction'],
-                    'summary': self._create_availability_summary(date_info, time_info)
+                    'parsed_successfully': parsed_successfully,
+                    'summary': self._create_availability_summary(date_info, time_info),
+                    'debug_info': {
+                        **parsed_data['debug_info'],
+                        'date_patterns_tried': getattr(self, '_last_date_patterns_tried', []),
+                        'time_patterns_tried': getattr(self, '_last_time_patterns_tried', [])
+                    }
                 })
             
             elif category in ['Sound', 'Power', 'Parking', 'Access']:
-                # Parse access restrictions
+                # Parse access restrictions with debug info
+                print(f"  → Parsing as {category.upper()} constraint")
                 access_info = self._parse_access_restrictions(details)
-                time_info = self._parse_time_restrictions(details)  # Time-based restrictions
+                time_info = self._parse_time_restrictions(details)
+                
+                print(f"  → Access parsing result: {access_info}")
+                print(f"  → Time parsing result: {time_info}")
+                
+                parsed_successfully = access_info['has_access_restrictions'] or time_info['has_time_restriction']
+                print(f"  → Parsed successfully: {parsed_successfully}")
                 
                 parsed_data.update({
                     'access_restrictions': access_info,
                     'time_restrictions': time_info,
-                    'parsed_successfully': access_info['has_access_restrictions'] or time_info['has_time_restriction'],
+                    'parsed_successfully': parsed_successfully,
                     'summary': self._create_access_summary(category, access_info, time_info)
                 })
             
             else:
-                # Environmental factors and general notes
+                # Environmental factors and general notes - always successful if has content
+                print(f"  → Parsing as {category.upper()} constraint (environmental/notes)")
+                parsed_successfully = bool(details and details.strip())
+                print(f"  → Parsed successfully: {parsed_successfully}")
+                
                 parsed_data.update({
                     'raw_details': details,
-                    'parsed_successfully': bool(details.strip()),
+                    'parsed_successfully': parsed_successfully,
                     'summary': f"{category}: {details[:50]}..." if len(details) > 50 else f"{category}: {details}"
                 })
+            
+            print(f"  → Final summary: '{parsed_data['summary']}'")
+            print(f"  " + "-"*50)
         
         except Exception as e:
-            print(f"WARNING: Failed to parse {category} constraint details '{details}': {e}")
+            print(f"ERROR: Failed to parse {category} constraint details '{details}': {e}")
             parsed_data['error'] = str(e)
+            parsed_data['debug_info']['parsing_error'] = str(e)
         
         return parsed_data
 
@@ -1275,6 +1411,56 @@ class StructuredConstraintParser:
         
         print(f"="*60)
 
+    def analyze_failed_location_constraints(self):
+        """Analyze failed location constraints to improve parsing - NEW DEBUG METHOD"""
+        print(f"\n" + "="*80)
+        print(f"PHASE A DEBUGGING: FAILED LOCATION CONSTRAINT ANALYSIS")
+        print(f"="*80)
+        
+        if not hasattr(self, 'constraints'):
+            print("No constraints found for analysis")
+            return
+        
+        location_constraints = [c for c in self.constraints if c.source == ConstraintPriority.LOCATION]
+        
+        failed_constraints = []
+        successful_constraints = []
+        
+        for constraint in location_constraints:
+            if constraint.location_restriction and 'parsed_data' in constraint.location_restriction:
+                parsed_data = constraint.location_restriction['parsed_data']
+                if parsed_data.get('parsed_successfully', False):
+                    successful_constraints.append(constraint)
+                else:
+                    failed_constraints.append(constraint)
+        
+        print(f"📊 SUMMARY:")
+        print(f"  • Total location constraints: {len(location_constraints)}")
+        print(f"  • Successful: {len(successful_constraints)}")
+        print(f"  • Failed: {len(failed_constraints)}")
+        
+        if failed_constraints:
+            print(f"\n❌ FAILED CONSTRAINT SAMPLES (first 5):")
+            for i, constraint in enumerate(failed_constraints[:5]):
+                location_restriction = constraint.location_restriction
+                print(f"\n  {i+1}. Location: {location_restriction.get('location', 'Unknown')}")
+                print(f"     Category: {location_restriction.get('category', 'Unknown')}")
+                print(f"     Details: '{location_restriction.get('details', 'No details')}'")
+                
+                parsed_data = location_restriction.get('parsed_data', {})
+                if 'debug_info' in parsed_data:
+                    debug_info = parsed_data['debug_info']
+                    print(f"     Debug info: {debug_info}")
+        
+        if successful_constraints:
+            print(f"\n✅ SUCCESSFUL CONSTRAINT SAMPLES (first 3):")
+            for i, constraint in enumerate(successful_constraints[:3]):
+                location_restriction = constraint.location_restriction
+                parsed_data = location_restriction.get('parsed_data', {})
+                print(f"\n  {i+1}. Location: {location_restriction.get('location', 'Unknown')}")
+                print(f"     Summary: {parsed_data.get('summary', 'No summary')}")
+        
+        print(f"="*80)
     
 
 class ShootingCalendar:
