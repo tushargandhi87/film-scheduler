@@ -1787,24 +1787,28 @@ class LocationFirstGA:
             # Direct constraint type mapping (fast and reliable)
             if structured_type == 'shoot_first':
                 self.director_shoot_first.extend(affected_scenes)
-                print(f"DEBUG: Added 'shoot first' mandate for scenes: {affected_scenes}")
-            
+                #print(f"DEBUG: Added 'shoot first' mandate for scenes: {affected_scenes}")
+                #debug commented by tushar on 22 August
+
             elif structured_type == 'shoot_last':
                 self.director_shoot_last.extend(affected_scenes)
-                print(f"DEBUG: Added 'shoot last' mandate for scenes: {affected_scenes}")
-            
+                #print(f"DEBUG: Added 'shoot last' mandate for scenes: {affected_scenes}")
+                 #debug commented by tushar on 22 August
+
             elif structured_type == 'sequence_before_after':
                 sequence_rule = self._create_sequence_rule('before', affected_scenes, constraint_level, reasoning)
                 if sequence_rule:
                     self.director_sequence_rules.append(sequence_rule)
-                    print(f"DEBUG: Added 'before' sequence rule: scenes {affected_scenes}")
-            
+                    #print(f"DEBUG: Added 'before' sequence rule: scenes {affected_scenes}")
+                     #debug commented by tushar on 22 August
+
             elif structured_type == 'sequence_after_before':
                 sequence_rule = self._create_sequence_rule('after', affected_scenes, constraint_level, reasoning)
                 if sequence_rule:
                     self.director_sequence_rules.append(sequence_rule)
-                    print(f"DEBUG: Added 'after' sequence rule: scenes {affected_scenes}")
-            
+                    #print(f"DEBUG: Added 'after' sequence rule: scenes {affected_scenes}")
+                     #debug commented by tushar on 22 August
+
             elif structured_type == 'same_day_grouping':
                 if len(affected_scenes) > 1:
                     self.director_same_day_groups.append({
@@ -1813,8 +1817,9 @@ class LocationFirstGA:
                         'reasoning': reasoning,
                         'constraint_text': constraint.description
                     })
-                    print(f"DEBUG: Added same day grouping for scenes: {affected_scenes}")
-            
+                    #print(f"DEBUG: Added same day grouping for scenes: {affected_scenes}")
+                     #debug commented by tushar on 22 August
+
             elif structured_type == 'consecutive_days':
                 if len(affected_scenes) > 1:
                     self.director_same_day_groups.append({
@@ -1824,12 +1829,14 @@ class LocationFirstGA:
                         'constraint_text': constraint.description,
                         'type': 'consecutive'  # Special marker for consecutive vs same day
                     })
-                    print(f"DEBUG: Added consecutive days grouping for scenes: {affected_scenes}")
-            
+                    #print(f"DEBUG: Added consecutive days grouping for scenes: {affected_scenes}")
+                     #debug commented by tushar on 22 August
+
             elif structured_type == 'location_grouping':
                 self._handle_location_grouping_structured(constraint, locations, constraint_level, reasoning)
-                print(f"DEBUG: Added location grouping for locations: {locations}")
-            
+                #print(f"DEBUG: Added location grouping for locations: {locations}")
+                 #debug commented by tushar on 22 August
+
             elif structured_type in ['actor_rest_day', 'prep_time_required', 'wrap_time_required']:
                 # Future constraint types - placeholder for Phase 3
                 print(f"DEBUG: Structured constraint type '{structured_type}' recognized but not yet implemented")
@@ -2295,8 +2302,9 @@ class LocationFirstGA:
                 
                 if window:
                     self.location_availability_windows[location].append(window)
-                    print(f"DEBUG: Added availability window for {location}: {window}")
-            
+                   # print(f"DEBUG: Added availability window for {location}: {window}")
+                     #debug commented by tushar on 22 August
+
             elif constraint_type == 'time_restriction':
                 if location not in self.location_time_restrictions:
                     self.location_time_restrictions[location] = []
@@ -2310,8 +2318,9 @@ class LocationFirstGA:
                     restriction['end_time'] = parsed_data['end_time_restriction']
                 
                 self.location_time_restrictions[location].append(restriction)
-                print(f"DEBUG: Added time restriction for {location}: {restriction}")
-            
+                #print(f"DEBUG: Added time restriction for {location}: {restriction}")
+                 #debug commented by tushar on 22 August
+
             elif constraint_type == 'day_restriction':
                 if parsed_data.get('day_restrictions'):
                     self.location_day_restrictions[location] = {
@@ -2319,8 +2328,9 @@ class LocationFirstGA:
                         'restriction_type': parsed_data.get('restriction_type', 'specific_days'),
                         'constraint_level': constraint.type.value
                     }
-                    print(f"DEBUG: Added day restriction for {location}: {parsed_data['day_restrictions']}")
-            
+                   # print(f"DEBUG: Added day restriction for {location}: {parsed_data['day_restrictions']}")
+                     #debug commented by tushar on 22 August
+
             elif constraint_type == 'access_limitation':
                 if location not in self.location_access_limitations:
                     self.location_access_limitations[location] = []
@@ -2338,8 +2348,9 @@ class LocationFirstGA:
                     limitation['time_periods'] = parsed_data['time_periods']
                 
                 self.location_access_limitations[location].append(limitation)
-                print(f"DEBUG: Added access limitation for {location}: {limitation}")
-            
+                #print(f"DEBUG: Added access limitation for {location}: {limitation}")
+                 #debug commented by tushar on 22 August
+
             elif constraint_type == 'environmental_factor':
                 if location not in self.location_environmental_factors:
                     self.location_environmental_factors[location] = []
@@ -2351,8 +2362,9 @@ class LocationFirstGA:
                 }
                 
                 self.location_environmental_factors[location].append(factor)
-                print(f"DEBUG: Added environmental factor for {location}: {factor}")
-        
+                #print(f"DEBUG: Added environmental factor for {location}: {factor}")
+                 #debug commented by tushar on 22 August
+
         except Exception as e:
             print(f"ERROR: Failed to map location constraint: {e}")
 
@@ -3604,7 +3616,7 @@ class ScheduleOptimizer:
         print(f"DEBUG: Checking availability violations for {len(ga_instance.location_availability_windows)} locations")
         for location, windows in ga_instance.location_availability_windows.items():
             print(f"DEBUG: Location '{location}' has {len(windows)} availability windows")
-
+        
         try:
             for i, cluster_idx in enumerate(sequence):
                 if cluster_idx >= len(ga_instance.cluster_manager.clusters):
@@ -3614,30 +3626,43 @@ class ScheduleOptimizer:
                 location = cluster.location
                 start_day = day_assignments[i]
                 
+                # DEBUG: Add this
+                print(f"DEBUG: Checking cluster {i}: location='{location}', start_day={start_day}, estimated_days={cluster.estimated_days}")
+                
                 if location in ga_instance.location_availability_windows:
                     windows = ga_instance.location_availability_windows[location]
+                    print(f"DEBUG: Found {len(windows)} windows for '{location}'")
                     
                     # Check each day this cluster needs
                     for day_offset in range(cluster.estimated_days):
                         shooting_day_idx = start_day + day_offset
                         if shooting_day_idx >= len(ga_instance.calendar.shooting_days):
+                            print(f"DEBUG: Day {shooting_day_idx} exceeds calendar length {len(ga_instance.calendar.shooting_days)}")
                             continue
                         
                         shooting_date = ga_instance.calendar.shooting_days[shooting_day_idx]
+                        print(f"DEBUG: Checking date {shooting_date} (day {shooting_day_idx}) for location '{location}'")
                         
                         # Check against all availability windows for this location
                         date_allowed = False
-                        for window in windows:
+                        for j, window in enumerate(windows):
+                            print(f"DEBUG: Checking window {j}: {window}")
                             if self._is_date_in_availability_window(shooting_date, window):
                                 date_allowed = True
+                                print(f"DEBUG: Date {shooting_date} ALLOWED by window {j}")
                                 break
+                            else:
+                                print(f"DEBUG: Date {shooting_date} NOT ALLOWED by window {j}")
                         
                         if not date_allowed:
+                            print(f"DEBUG: VIOLATION FOUND! Location '{location}' scheduled on {shooting_date} but not available")
+                            
                             # Find affected scenes
                             affected_scenes = []
                             if shooting_day_idx < len(schedule):
                                 day_schedule = schedule[shooting_day_idx]
                                 affected_scenes = [scene['Scene_Number'] for scene in day_schedule.get('scenes', [])]
+                                print(f"DEBUG: Affected scenes: {affected_scenes}")
                             
                             conflicts.append({
                                 'type': 'location_availability_violation',
@@ -3649,10 +3674,17 @@ class ScheduleOptimizer:
                                 'scheduled_date': shooting_date.strftime("%Y-%m-%d"),
                                 'available_windows': [self._format_availability_window(w) for w in windows]
                             })
+                        else:
+                            print(f"DEBUG: Date {shooting_date} is allowed for location '{location}'")
+                else:
+                    print(f"DEBUG: No availability windows found for location '{location}'")
         
         except Exception as e:
             print(f"ERROR: Location availability conflict check failed: {e}")
+            import traceback
+            traceback.print_exc()
         
+        print(f"DEBUG: Found {len(conflicts)} availability violations")
         return conflicts
 
     def _check_location_time_conflicts(self, ga_instance, sequence: List[int], 
