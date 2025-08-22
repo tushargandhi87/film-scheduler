@@ -2823,6 +2823,14 @@ class LocationFirstGA:
                 location_scenes = self._find_scenes_at_location(location)
                 all_required_scenes.update(location_scenes)
                 print(f"DEBUG: Location '{location}' requires equipment '{equipment_name}' - found in scenes: {location_scenes}")
+
+            # Add this after location dependencies resolution:
+            story_elements = requirements.get('story_elements', [])
+            for story_element in story_elements:
+                story_scenes = self._find_scenes_with_story_element(story_element)
+                all_required_scenes.update(story_scenes)
+                if len(story_scenes) <= 3:  # Only log if not too many
+                    print(f"DEBUG: Story element '{story_element}' requires equipment '{equipment_name}' - found in scenes: {story_scenes}")
             
             # Store all resolved scene requirements
             for scene_str in all_required_scenes:
@@ -2859,6 +2867,28 @@ class LocationFirstGA:
         except Exception as e:
             print(f"ERROR: Processing equipment requirements for '{equipment_name}': {e}")
 
+    def _find_scenes_with_story_element(self, story_element: str) -> List[str]:
+        """Find scenes that contain the story element (search in Synopsis)"""
+        matching_scenes = []
+        
+        try:
+            # Search through all clusters and scenes
+            for cluster in self.cluster_manager.clusters:
+                for scene in cluster.scenes:
+                    synopsis = scene.get('Synopsis', '').lower()
+                    location_name = scene.get('Location_Name', '').lower()
+                    
+                    # Search in both synopsis and location name
+                    if (story_element.lower() in synopsis or 
+                        story_element.lower() in location_name):
+                        matching_scenes.append(str(scene['Scene_Number']))
+            
+            return list(set(matching_scenes))  # Remove duplicates
+    
+        except Exception as e:
+            print(f"ERROR: Finding scenes with story element '{story_element}': {e}")
+            return []
+
     def _find_scenes_with_character(self, character_name: str) -> List[str]:
         """Find all scene numbers that include the specified character"""
         matching_scenes = []
@@ -2880,8 +2910,7 @@ class LocationFirstGA:
             return list(set(matching_scenes))  # Remove duplicates
         
         except Exception as e:
-            print(f"ERROR: Finding scenes with character '{character_name}': {e}")
-            return []
+            return []  # Removed debug print
 
     def _find_scenes_at_location(self, location_name: str) -> List[str]:
         """Find all scene numbers at the specified location"""
@@ -2904,8 +2933,7 @@ class LocationFirstGA:
             return list(set(matching_scenes))  # Remove duplicates
         
         except Exception as e:
-            print(f"ERROR: Finding scenes at location '{location_name}': {e}")
-            return []
+            return []  # Removed debug print
 
     def _build_scene_to_day_mapping(self, sequence: List[int], day_assignments: List[int]) -> Dict[str, int]:
         """Build efficient scene number to shooting day mapping - WITH COMPREHENSIVE VALIDATION"""
