@@ -2799,40 +2799,58 @@ class LocationFirstGA:
             traceback.print_exc()
 
     def _process_equipment_requirements(self, equipment_name: str, requirements: Dict):
-        """Process enhanced equipment requirements data"""
+        """Process enhanced equipment requirements data - ENHANCED with character/location resolution"""
         try:
-            # Map required scenes
+            # Map explicit required scenes
             required_scenes = requirements.get('required_scenes', [])
+            all_required_scenes = set()
+            
             for scene_num in required_scenes:
                 scene_str = str(scene_num).strip()
+                all_required_scenes.add(scene_str)
+                print(f"DEBUG: Scene {scene_str} requires equipment '{equipment_name}'")
+            
+            # NEW: Resolve character dependencies to scenes
+            character_deps = requirements.get('character_dependencies', [])
+            for character in character_deps:
+                character_scenes = self._find_scenes_with_character(character)
+                all_required_scenes.update(character_scenes)
+                print(f"DEBUG: Character '{character}' requires equipment '{equipment_name}' - found in scenes: {character_scenes}")
+            
+            # NEW: Resolve location dependencies to scenes  
+            location_deps = requirements.get('location_dependencies', [])
+            for location in location_deps:
+                location_scenes = self._find_scenes_at_location(location)
+                all_required_scenes.update(location_scenes)
+                print(f"DEBUG: Location '{location}' requires equipment '{equipment_name}' - found in scenes: {location_scenes}")
+            
+            # Store all resolved scene requirements
+            for scene_str in all_required_scenes:
                 if scene_str not in self.equipment_scene_requirements:
                     self.equipment_scene_requirements[scene_str] = []
                 self.equipment_scene_requirements[scene_str].append(equipment_name)
-                print(f"DEBUG: Scene {scene_str} requires equipment '{equipment_name}'")
             
-            # Map character dependencies
-            character_deps = requirements.get('character_dependencies', [])
+            # Map character dependencies (existing code)
             for character in character_deps:
                 if character not in self.equipment_character_deps:
                     self.equipment_character_deps[character] = []
                 self.equipment_character_deps[character].append(equipment_name)
                 print(f"DEBUG: Character '{character}' requires equipment '{equipment_name}'")
             
-            # Map location dependencies  
-            location_deps = requirements.get('location_dependencies', [])
+            # Map location dependencies (existing code)
             for location in location_deps:
                 if location not in self.equipment_location_deps:
                     self.equipment_location_deps[location] = []
                 self.equipment_location_deps[location].append(equipment_name)
                 print(f"DEBUG: Location '{location}' requires equipment '{equipment_name}'")
             
-            # Store prep requirements
+            # Store prep requirements (existing code)
             prep_reqs = requirements.get('prep_requirements', {})
             if prep_reqs:
                 self.equipment_prep_requirements[equipment_name] = prep_reqs
                 print(f"DEBUG: Equipment '{equipment_name}' has prep requirements: {prep_reqs}")
             
-            # Store rental schedules
+            # Store rental schedules (existing code)
             rental_schedule = requirements.get('rental_schedule', {})
             if rental_schedule:
                 self.equipment_rental_schedules[equipment_name] = rental_schedule
@@ -2841,6 +2859,53 @@ class LocationFirstGA:
         except Exception as e:
             print(f"ERROR: Processing equipment requirements for '{equipment_name}': {e}")
 
+    def _find_scenes_with_character(self, character_name: str) -> List[str]:
+        """Find all scene numbers that include the specified character"""
+        matching_scenes = []
+        
+        try:
+            # Search through all clusters and scenes
+            for cluster in self.cluster_manager.clusters:
+                for scene in cluster.scenes:
+                    cast = scene.get('Cast', [])
+                    
+                    # Handle both list and string cast formats
+                    if isinstance(cast, list):
+                        if character_name in cast:
+                            matching_scenes.append(str(scene['Scene_Number']))
+                    elif isinstance(cast, str):
+                        if character_name in cast:
+                            matching_scenes.append(str(scene['Scene_Number']))
+            
+            return list(set(matching_scenes))  # Remove duplicates
+        
+        except Exception as e:
+            print(f"ERROR: Finding scenes with character '{character_name}': {e}")
+            return []
+
+    def _find_scenes_at_location(self, location_name: str) -> List[str]:
+        """Find all scene numbers at the specified location"""
+        matching_scenes = []
+        
+        try:
+            # Search through all clusters and scenes
+            for cluster in self.cluster_manager.clusters:
+                for scene in cluster.scenes:
+                    # Check both Location_Name and Geographic_Location
+                    scene_location_name = scene.get('Location_Name', '')
+                    scene_geographic = scene.get('Geographic_Location', '')
+                    
+                    if (location_name in scene_location_name or 
+                        location_name in scene_geographic or
+                        scene_location_name in location_name or
+                        scene_geographic in location_name):
+                        matching_scenes.append(str(scene['Scene_Number']))
+            
+            return list(set(matching_scenes))  # Remove duplicates
+        
+        except Exception as e:
+            print(f"ERROR: Finding scenes at location '{location_name}': {e}")
+            return []
 
     def _build_scene_to_day_mapping(self, sequence: List[int], day_assignments: List[int]) -> Dict[str, int]:
         """Build efficient scene number to shooting day mapping - WITH COMPREHENSIVE VALIDATION"""
