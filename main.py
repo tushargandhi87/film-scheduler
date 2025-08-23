@@ -1611,15 +1611,25 @@ class LocationFirstGA:
         return violations
 
     def _validate_rental_schedule(self, equipment_name: str, usage_days: List[int], rental_schedule: Dict) -> int:
-        """Validate equipment usage against rental schedule"""
+        """Validate equipment usage against rental schedule - FIXED VERSION"""
         violations = 0
         
         try:
-            # Simple check: if equipment has limited rental days
-            for week_key, week_data in rental_schedule.items():
-                if 'days' in week_data:
-                    max_days = week_data['days']
-                    week_num = int(week_key.split('_')[1]) if '_' in week_key else 1
+            for schedule_key, schedule_data in rental_schedule.items():
+                if 'days' in schedule_data:
+                    max_days = schedule_data['days']
+                    
+                    # FIXED: Safe week number extraction
+                    week_num = 1  # default
+                    try:
+                        # Look for "week_X" pattern in the key
+                        parts = schedule_key.split('_')
+                        for i, part in enumerate(parts):
+                            if part == 'week' and i + 1 < len(parts):
+                                week_num = int(parts[i + 1])
+                                break
+                    except (ValueError, IndexError):
+                        week_num = 1  # Use default if parsing fails
                     
                     # Count usage days in this week
                     week_usage_count = 0
@@ -1628,7 +1638,6 @@ class LocationFirstGA:
                         if day_week == week_num:
                             week_usage_count += 1
                     
-
                     if week_usage_count > max_days:
                         violations += 1
                         self._equipment_debug_count += 1
@@ -2871,22 +2880,39 @@ class LocationFirstGA:
         """Find scenes that contain the story element (search in Synopsis)"""
         matching_scenes = []
         
+        # DEBUG: Print first few synopses to see content
+        debug_count = 0
+        found_train_scenes = []
+        
         try:
-            # Search through all clusters and scenes
             for cluster in self.cluster_manager.clusters:
                 for scene in cluster.scenes:
                     synopsis = scene.get('Synopsis', '').lower()
                     location_name = scene.get('Location_Name', '').lower()
+                    scene_number = scene.get('Scene_Number', '')
                     
-                    # Search in both synopsis and location name
-                    if (story_element.lower() in synopsis or 
-                        story_element.lower() in location_name):
-                        matching_scenes.append(str(scene['Scene_Number']))
+                    # DEBUG: Show synopsis content for first few scenes
+                    if debug_count < 5:
+                        print(f"DEBUG: Scene {scene_number} Synopsis: '{synopsis}' Location: '{location_name}'")
+                        debug_count += 1
+                    
+                    # Special debug for train-related scenes
+                    if 'train' in synopsis or 'train' in location_name:
+                        found_train_scenes.append(f"Scene {scene_number}: '{synopsis}' at '{location_name}'")
+                    
+                    # Search with more flexible matching
+                    story_words = story_element.lower().split()
+                    if any(word in synopsis or word in location_name for word in story_words):
+                        matching_scenes.append(str(scene_number))
             
-            return list(set(matching_scenes))  # Remove duplicates
+            # DEBUG: Report train scenes found
+            if story_element.lower() in ['model train set', 'model train sequence'] and found_train_scenes:
+                print(f"DEBUG: Found train-related scenes: {found_train_scenes}")
+            
+            return list(set(matching_scenes))
     
         except Exception as e:
-            print(f"ERROR: Finding scenes with story element '{story_element}': {e}")
+            print(f"ERROR: Story element search failed: {e}")
             return []
 
     def _find_scenes_with_character(self, character_name: str) -> List[str]:
