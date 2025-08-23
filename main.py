@@ -624,41 +624,57 @@ class StructuredConstraintParser:
         return constraints
     
     def _parse_operational_data(self, operational_data: Dict) -> List[Constraint]:
-        """Parse production rules and weather data - ENHANCED with production_restriction"""
+        """Parse production rules and weather data - ENHANCED with structured production rules (no regex)"""
         constraints = []
         
         try:
-            # Parse production rules
+            # Parse production rules using structured data from n8n
             if 'production_rules' in operational_data:
                 prod_data = operational_data['production_rules']
                 
+                # Handle both nested and direct structure
                 if 'rules' in prod_data:
                     production_rules = prod_data['rules']
                 else:
                     production_rules = prod_data
                 
+                print(f"DEBUG: Processing {len(production_rules)} production rules from structured n8n data")
+                
                 for rule_info in production_rules:
-                    constraint_level = rule_info.get('constraint_level', 'Hard')
-                    constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
-                    parameter_name = rule_info.get('parameter_name', '')
-                    rule_text = rule_info.get('raw_text', '')
+                    try:
+                        # Extract structured data (no regex needed!)
+                        parameter_name = rule_info.get('parameter_name', '')
+                        constraint_level = rule_info.get('constraint_level', 'Hard')
+                        rule_category = rule_info.get('rule_category', '')
+                        raw_text = rule_info.get('raw_text', '')
+                        parsed_data = rule_info.get('parsed_data', {})
+                        
+                        # Convert constraint level
+                        constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+                        
+                        # Create constraint with structured production_restriction
+                        constraint = Constraint(
+                            source=ConstraintPriority.PRODUCTION,
+                            type=constraint_type,
+                            description=f"Production rule: {raw_text}",
+                            affected_scenes=[],
+                            production_restriction={
+                                'parameter_name': parameter_name,
+                                'rule_category': rule_category,
+                                'constraint_level': constraint_level,
+                                'rule_text': raw_text,
+                                'parsed_data': parsed_data,  # Structured data from n8n - no parsing needed!
+                                'rule_type': parsed_data.get('rule_type', 'general_production')
+                            }
+                        )
+                        
+                        constraints.append(constraint)
+                        print(f"DEBUG: Added production rule: {parameter_name} ({constraint_level}) - {parsed_data.get('rule_type', 'unknown')}")
                     
-                    # Parse rule-specific data
-                    parsed_data = self._parse_production_rule_data(parameter_name, rule_text)
-                    
-                    constraints.append(Constraint(
-                        source=ConstraintPriority.PRODUCTION,
-                        type=constraint_type,
-                        description=f"Production rule: {rule_text}",
-                        affected_scenes=[],
-                        production_restriction={
-                            'rule_type': self._categorize_production_rule(parameter_name),
-                            'parameter_name': parameter_name,
-                            'constraint_level': constraint_level,
-                            'rule_text': rule_text,
-                            'parsed_data': parsed_data
-                        }
-                    ))
+                    except Exception as e:
+                        print(f"ERROR: Failed to parse production rule: {e}")
+                        print(f"       Rule data: {rule_info}")
+                        continue
             
             # Parse weather data (unchanged)
             if 'weather' in operational_data:
@@ -679,9 +695,15 @@ class StructuredConstraintParser:
                         ))
         
         except Exception as e:
-            print(f"DEBUG: Error parsing operational constraints: {e}")
-        
-        return constraints
+            print(f"ERROR: Operational constraints parsing failed: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    production_rules_count = len([c for c in constraints if c.source == ConstraintPriority.PRODUCTION])
+    weather_rules_count = len([c for c in constraints if c.source == ConstraintPriority.WEATHER])
+    print(f"DEBUG: Parsed {production_rules_count} production rules, {weather_rules_count} weather rules")
+    
+    return constraints
 
     def _categorize_production_rule(self, parameter_name: str) -> str:
         """Categorize production rule into standardized type"""
@@ -1448,63 +1470,99 @@ class LocationFirstGA:
             print(f"DEBUG: Production constraints processed: {production_constraints_processed}")
 
     def _map_production_constraint(self, constraint):
-        """Map production rule constraint to GA storage - NEW METHOD"""
+        """Map production rule constraint to GA storage - ENHANCED with structured data"""
         try:
             production_restriction = constraint.production_restriction
             if not production_restriction:
                 print(f"DEBUG: No production_restriction found in constraint: {constraint.description}")
                 return
             
-            rule_type = production_restriction.get('rule_type')
+            parameter_name = production_restriction.get('parameter_name', '')
+            rule_category = production_restriction.get('rule_category', '')
             constraint_level = production_restriction.get('constraint_level', 'Hard')
             parsed_data = production_restriction.get('parsed_data', {})
+            rule_type = parsed_data.get('rule_type', 'general_production')
             
-            if not rule_type:
-                print(f"DEBUG: No rule_type found in production constraint: {constraint.description}")
+            if not parameter_name:
+                print(f"DEBUG: No parameter_name found in production constraint: {constraint.description}")
                 return
             
-            print(f"DEBUG: Processing production rule '{rule_type}' with level '{constraint_level}'")
+            print(f"DEBUG: Processing production rule '{parameter_name}' ({rule_category}) - {rule_type}")
             
             # Store in production rules registry
-            self.production_rules[rule_type] = {
+            self.production_rules[parameter_name] = {
                 'constraint': constraint,
                 'constraint_level': constraint_level,
+                'rule_category': rule_category,
+                'rule_type': rule_type,
                 'parsed_data': parsed_data
             }
             
-            # Map to specific GA attributes for fast lookup
-            if rule_type == 'sunday_prohibition':
-                self.sunday_prohibition = True
-                prohibited_days = parsed_data.get('prohibited_days', ['Sunday'])
-                print(f"DEBUG: Sunday work prohibition enabled - prohibited days: {prohibited_days}")
+            # Map to specific GA attributes using structured data (no regex!)
+            if rule_type == 'work_week_restriction':
+                self.sunday_prohibition = 'Sunday' in parsed_data.get('prohibited_days', [])
+                prohibited_days = parsed_data.get('prohibited_days', [])
+                allowed_days = parsed_data.get('allowed_days', [])
+                print(f"DEBUG: Work week restriction - Prohibited: {prohibited_days}, Allowed: {allowed_days}")
             
-            elif rule_type == 'mandatory_turnaround':
+            elif rule_type == 'minimum_turnaround':
                 self.mandatory_turnaround_hours = parsed_data.get('rest_period_hours', 12)
-                print(f"DEBUG: Mandatory turnaround: {self.mandatory_turnaround_hours} hours")
+                applies_to = parsed_data.get('applies_to', [])
+                print(f"DEBUG: Turnaround requirement: {self.mandatory_turnaround_hours} hours for {applies_to}")
             
-            elif rule_type == 'company_moves':
+            elif rule_type == 'daily_hour_limits':
+                # Handle both standard work hours and overtime triggers
+                self.overtime_threshold_hours = parsed_data.get('overtime_trigger_hours', 
+                                                            parsed_data.get('standard_work_hours', 10.0))
+                standard_hours = parsed_data.get('standard_work_hours', 10)
+                print(f"DEBUG: Daily work limits - Standard: {standard_hours}h, Overtime trigger: {self.overtime_threshold_hours}h")
+            
+            elif rule_type == 'location_move_limits':
                 self.max_company_moves_per_day = parsed_data.get('max_moves_per_day', 1)
-                print(f"DEBUG: Max company moves per day: {self.max_company_moves_per_day}")
+                travel_zone = parsed_data.get('travel_zone', 'unknown')
+                print(f"DEBUG: Company moves - Max {self.max_company_moves_per_day}/day in {travel_zone}")
             
-            elif rule_type == 'minor_work_hours':
+            elif rule_type == 'minor_hour_limits':
                 self.minor_max_work_hours = parsed_data.get('max_work_hours', 9.5)
-                includes_breaks = parsed_data.get('includes_breaks_schooling', True)
-                print(f"DEBUG: Minor max work hours: {self.minor_max_work_hours} (includes breaks: {includes_breaks})")
+                includes_breaks = parsed_data.get('includes_breaks', True)
+                includes_schooling = parsed_data.get('includes_schooling', True)
+                print(f"DEBUG: Minor work limits - {self.minor_max_work_hours}h (breaks: {includes_breaks}, school: {includes_schooling})")
             
-            elif rule_type == 'overtime_policy':
-                self.overtime_threshold_hours = parsed_data.get('standard_hours_threshold', 10.0)
-                requires_approval = parsed_data.get('requires_approval', True)
-                print(f"DEBUG: Overtime threshold: {self.overtime_threshold_hours} hours (requires approval: {requires_approval})")
+            elif rule_type == 'minor_schooling_requirements':
+                # Store additional minor requirements
+                tutoring_hours = parsed_data.get('tutoring_hours_required', 3)
+                print(f"DEBUG: Minor schooling - {tutoring_hours}h tutoring required")
             
-            elif rule_type == 'weather_contingency':
+            elif rule_type == 'minor_scheduling_restrictions':
+                # Store minor scheduling priorities
+                print(f"DEBUG: Minor scheduling restrictions stored")
+            
+            elif rule_type == 'overtime_approval_policy':
+                # Overtime policy is already handled by daily_hour_limits
+                requires_approval = parsed_data.get('requires_producer_approval', True)
+                print(f"DEBUG: Overtime policy - Requires approval: {requires_approval}")
+            
+            elif rule_type == 'location_block_scheduling':
+                # Store location block requirements
+                location = parsed_data.get('location', 'unknown')
+                min_days = parsed_data.get('min_block_days', 1)
+                max_days = parsed_data.get('max_block_days', 2)
+                print(f"DEBUG: Location block - {location}: {min_days}-{max_days} days")
+            
+            elif rule_type == 'location_availability_restrictions':
+                # Store location availability requirements
+                key_locations = parsed_data.get('key_locations', [])
+                print(f"DEBUG: Location availability restrictions for: {key_locations}")
+            
+            elif rule_type == 'cover_set_requirements':
                 self.weather_contingency_requirements = parsed_data
                 cover_days = parsed_data.get('cover_set_days_required', 2)
                 interior_ratio = parsed_data.get('interior_backup_ratio', 0.2)
-                print(f"DEBUG: Weather contingency - {cover_days} cover days, {interior_ratio:.1%} interior ratio required")
+                print(f"DEBUG: Weather contingency - {cover_days} cover days, {interior_ratio:.1%} interior ratio")
             
-            elif rule_type == 'general_production':
-                # Store general production rules without specific mapping
-                print(f"DEBUG: General production rule stored: {constraint.description}")
+            elif rule_type in ['production_schedule_limits', 'principal_cast_priority']:
+                # Store general production constraints
+                print(f"DEBUG: General production rule stored: {rule_type}")
             
             else:
                 print(f"DEBUG: Unknown production rule type '{rule_type}' - storing in registry only")
@@ -3565,6 +3623,32 @@ class LocationFirstGA:
         
         # Initialize population
         population = [self.create_individual() for _ in range(pop_size)]
+
+        # *** NEW DEBUG LOG START ***
+        ### gemini updates
+        print("\n" + "="*60)
+        print("DEBUG: First 5 Candidate Schedules (Initial Population)")
+        print("="*60)
+        for i, individual in enumerate(population[:5]):
+            print(f"--- Candidate {i+1} ---")
+            print(f"  - Sequence (Cluster Order): {individual['sequence']}")
+            print(f"  - Day Assignments (Start Day Index): {individual['day_assignments']}")
+            
+            # Add more detail to explain what the sequence means
+            detailed_sequence = []
+            for cluster_idx in individual['sequence']:
+                try:
+                    location = self.cluster_manager.clusters[cluster_idx].location
+                    # Truncate long location names for readability
+                    detailed_sequence.append(f"Cluster {cluster_idx} ('{location[:40]}...')")
+                except IndexError:
+                    detailed_sequence.append(f"Cluster {cluster_idx} (INVALID INDEX)")
+            print(f"  - Detailed Sequence Breakdown: {detailed_sequence}")
+            print("-" * 25)
+        print("="*60 + "\n")
+        # gemini updates
+        # *** NEW DEBUG LOG END ***
+
         best_individual = None
         best_fitness = -float('inf')
         
