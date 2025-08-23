@@ -699,11 +699,11 @@ class StructuredConstraintParser:
             import traceback
             traceback.print_exc()
     
-    production_rules_count = len([c for c in constraints if c.source == ConstraintPriority.PRODUCTION])
-    weather_rules_count = len([c for c in constraints if c.source == ConstraintPriority.WEATHER])
-    print(f"DEBUG: Parsed {production_rules_count} production rules, {weather_rules_count} weather rules")
+        production_rules_count = len([c for c in constraints if c.source == ConstraintPriority.PRODUCTION])
+        weather_rules_count = len([c for c in constraints if c.source == ConstraintPriority.WEATHER])
+        print(f"DEBUG: Parsed {production_rules_count} production rules, {weather_rules_count} weather rules")
     
-    return constraints
+        return constraints
 
     def _categorize_production_rule(self, parameter_name: str) -> str:
         """Categorize production rule into standardized type"""
