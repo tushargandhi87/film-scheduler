@@ -59,6 +59,7 @@ class ConstraintType(Enum):
     HARD = "hard"
     SOFT = "soft"
 
+
 @dataclass
 class Constraint:
     """Generic constraint representation"""
@@ -69,7 +70,8 @@ class Constraint:
     date_restriction: Optional[Dict] = None
     actor_restriction: Optional[Dict] = None
     location_restriction: Optional[Dict] = None
-    equipment_restriction: Optional[Dict] = None  # ADD THIS LINE
+    equipment_restriction: Optional[Dict] = None
+    production_restriction: Optional[Dict] = None  # ADD THIS LINE
 
 @dataclass
 class LocationCluster:
@@ -622,7 +624,7 @@ class StructuredConstraintParser:
         return constraints
     
     def _parse_operational_data(self, operational_data: Dict) -> List[Constraint]:
-        """Parse production rules and weather data"""
+        """Parse production rules and weather data - ENHANCED with production_restriction"""
         constraints = []
         
         try:
@@ -638,19 +640,27 @@ class StructuredConstraintParser:
                 for rule_info in production_rules:
                     constraint_level = rule_info.get('constraint_level', 'Hard')
                     constraint_type = ConstraintType.HARD if constraint_level == 'Hard' else ConstraintType.SOFT
+                    parameter_name = rule_info.get('parameter_name', '')
+                    rule_text = rule_info.get('raw_text', '')
+                    
+                    # Parse rule-specific data
+                    parsed_data = self._parse_production_rule_data(parameter_name, rule_text)
                     
                     constraints.append(Constraint(
                         source=ConstraintPriority.PRODUCTION,
                         type=constraint_type,
-                        description=f"Production rule: {rule_info.get('raw_text', '')}",
+                        description=f"Production rule: {rule_text}",
                         affected_scenes=[],
-                        date_restriction={
-                            'parameter': rule_info.get('parameter_name'),
-                            'rule_text': rule_info.get('raw_text')
+                        production_restriction={
+                            'rule_type': self._categorize_production_rule(parameter_name),
+                            'parameter_name': parameter_name,
+                            'constraint_level': constraint_level,
+                            'rule_text': rule_text,
+                            'parsed_data': parsed_data
                         }
                     ))
             
-            # Parse weather data
+            # Parse weather data (unchanged)
             if 'weather' in operational_data:
                 weather_data = operational_data['weather']
                 
@@ -672,6 +682,91 @@ class StructuredConstraintParser:
             print(f"DEBUG: Error parsing operational constraints: {e}")
         
         return constraints
+
+    def _categorize_production_rule(self, parameter_name: str) -> str:
+        """Categorize production rule into standardized type"""
+        param_lower = parameter_name.lower() if parameter_name else ""
+        
+        if 'work_week' in param_lower or 'sunday' in param_lower:
+            return 'sunday_prohibition'
+        elif 'turnaround' in param_lower or 'rest' in param_lower:
+            return 'mandatory_turnaround'
+        elif 'move' in param_lower or 'company_move' in param_lower:
+            return 'company_moves'
+        elif 'minor' in param_lower or 'child' in param_lower:
+            return 'minor_work_hours'
+        elif 'overtime' in param_lower:
+            return 'overtime_policy'
+        elif 'weather' in param_lower or 'contingency' in param_lower:
+            return 'weather_contingency'
+        else:
+            return 'general_production'
+
+    def _parse_production_rule_data(self, parameter_name: str, rule_text: str) -> Dict[str, Any]:
+        """Parse production rule into structured data"""
+        rule_type = self._categorize_production_rule(parameter_name)
+        rule_lower = rule_text.lower() if rule_text else ""
+        
+        parsed_data = {
+            'rule_type': rule_type,
+            'has_restriction': True
+        }
+        
+        try:
+            if rule_type == 'sunday_prohibition':
+                parsed_data.update({
+                    'prohibited_days': ['Sunday'],
+                    'work_days': ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+                })
+            
+            elif rule_type == 'mandatory_turnaround':
+                # Extract hour number from text like "12-hour rest period"
+                import re
+                hours_match = re.search(r'(\d+)-hour', rule_lower)
+                rest_hours = int(hours_match.group(1)) if hours_match else 12
+                parsed_data.update({
+                    'rest_period_hours': rest_hours,
+                    'applies_to': ['cast', 'crew']
+                })
+            
+            elif rule_type == 'company_moves':
+                parsed_data.update({
+                    'max_moves_per_day': 1,
+                    'applies_to_location_changes': True
+                })
+            
+            elif rule_type == 'minor_work_hours':
+                # Extract hours like "9.5 hours" or "maximum of 9.5 hours"
+                import re
+                hours_match = re.search(r'(\d+\.?\d*)\s*hours?', rule_lower)
+                max_hours = float(hours_match.group(1)) if hours_match else 9.5
+                parsed_data.update({
+                    'max_work_hours': max_hours,
+                    'includes_breaks_schooling': True,
+                    'applies_to_minors': True
+                })
+            
+            elif rule_type == 'overtime_policy':
+                parsed_data.update({
+                    'requires_approval': True,
+                    'standard_hours_threshold': 10.0,  # Assume 10h standard
+                    'penalty_applies': True
+                })
+            
+            elif rule_type == 'weather_contingency':
+                parsed_data.update({
+                    'cover_set_days_required': 2,
+                    'interior_backup_ratio': 0.2,
+                    'affects_exterior_scenes': True
+                })
+        
+        except Exception as e:
+            print(f"WARNING: Failed to parse production rule data: {e}")
+            parsed_data['parsing_error'] = str(e)
+        
+        return parsed_data
+
+
     
     def _extract_scene_numbers(self, text: str) -> List[str]:
         """Extract scene numbers from text"""
@@ -1201,6 +1296,15 @@ class LocationFirstGA:
         self.equipment_prep_requirements = {}      # equipment -> prep_data
         self.equipment_rental_schedules = {}       # equipment -> rental_schedule_data
 
+        # NEW: Production rule constraint storage
+        self.production_rules = {}                    # rule_type -> constraint_data
+        self.sunday_prohibition = False              # Sunday work prohibition flag
+        self.mandatory_turnaround_hours = 12         # Required rest period
+        self.max_company_moves_per_day = 1          # Company move limits  
+        self.minor_max_work_hours = 9.5             # Minor work hour limits
+        self.overtime_threshold_hours = 10.0        # Overtime trigger threshold
+        self.weather_contingency_requirements = {}   # Weather contingency rules
+
         # Build all constraint maps
         self._build_constraint_maps()
         self._build_travel_times()
@@ -1209,7 +1313,7 @@ class LocationFirstGA:
     # Replace these methods in LocationFirstGA class
 
     def _build_constraint_maps(self):
-        """Build efficient lookup structures for constraints - ENHANCED with location and equipment constraints"""
+        """Build efficient lookup structures for constraints - ENHANCED with production rules"""
         # Existing constraint initialization
         self.actor_unavailable_dates = defaultdict(list)
         self.actor_available_weeks = {}
@@ -1225,6 +1329,32 @@ class LocationFirstGA:
         self.director_location_groupings = {}
         self.director_mandates_raw = []
         
+        # Location constraint storage (existing)
+        self.location_availability_windows = {}     
+        self.location_time_restrictions = {}        
+        self.location_day_restrictions = {}         
+        self.location_access_limitations = {}       
+        self.location_environmental_factors = {}    
+        
+        # Equipment constraint storage (existing)
+        self.equipment_availability_dates = {}     
+        self.equipment_availability_weeks = {}     
+        self.equipment_required_days = {}          
+        self.equipment_scene_requirements = {}     
+        self.equipment_character_deps = {}         
+        self.equipment_location_deps = {}          
+        self.equipment_prep_requirements = {}      
+        self.equipment_rental_schedules = {}       
+        
+        # NEW: Production rule constraint storage
+        self.production_rules = {}                    # rule_type -> constraint_data
+        self.sunday_prohibition = False              # Sunday work prohibition flag
+        self.mandatory_turnaround_hours = 12         # Required rest period
+        self.max_company_moves_per_day = 1          # Company move limits  
+        self.minor_max_work_hours = 9.5             # Minor work hour limits
+        self.overtime_threshold_hours = 10.0        # Overtime trigger threshold
+        self.weather_contingency_requirements = {}   # Weather contingency rules
+
         # Other constraint maps (existing)
         self.location_windows = {}
         
@@ -1234,7 +1364,8 @@ class LocationFirstGA:
         structured_processed = 0
         fallback_processed = 0
         location_constraints_processed = 0
-        equipment_constraints_processed = 0  # NEW
+        equipment_constraints_processed = 0
+        production_constraints_processed = 0  # NEW
         
         # Process all constraints with individual error handling
         for constraint in self.constraints:
@@ -1252,12 +1383,15 @@ class LocationFirstGA:
                         fallback_processed += 1
                     
                     self._parse_director_constraint_safe(constraint)
-                elif constraint.source == ConstraintPriority.LOCATION:  # Location constraint processing
+                elif constraint.source == ConstraintPriority.LOCATION:
                     self._map_location_constraint(constraint)
                     location_constraints_processed += 1
-                elif constraint.source == ConstraintPriority.EQUIPMENT:  # NEW: Equipment constraint processing
+                elif constraint.source == ConstraintPriority.EQUIPMENT:
                     self._map_equipment_constraint(constraint)
                     equipment_constraints_processed += 1
+                elif constraint.source == ConstraintPriority.PRODUCTION:  # NEW
+                    self._map_production_constraint(constraint)
+                    production_constraints_processed += 1
                 elif constraint.location_restriction and constraint.location_restriction.get('location'):
                     # Legacy location constraint handling
                     location = constraint.location_restriction['location']
@@ -1275,7 +1409,7 @@ class LocationFirstGA:
         except Exception as e:
             print(f"ERROR: Travel times building failed: {e}")
         
-        # Enhanced summary with location and equipment constraints
+        # Enhanced summary with all constraint types
         print(f"DEBUG: Processed {constraints_processed} constraints with {constraint_processing_errors} errors")
         print(f"DEBUG: Built constraint maps - {len(self.actor_unavailable_dates)} actors, "
             f"{len(self.director_shoot_first)} 'shoot first', "
@@ -1289,10 +1423,16 @@ class LocationFirstGA:
             f"{len(self.location_day_restrictions)} day restrictions, "
             f"{len(self.location_access_limitations)} access limitations")
         
-        # NEW: Equipment constraint summary
+        # Equipment constraint summary
         print(f"DEBUG: Equipment constraints - {len(self.equipment_availability_weeks)} equipment items, "
             f"{len(self.equipment_scene_requirements)} scene requirements, "
             f"{len(self.equipment_prep_requirements)} prep requirements")
+        
+        # NEW: Production constraint summary
+        print(f"DEBUG: Production constraints - {len(self.production_rules)} rules processed, "
+            f"Sunday prohibition: {self.sunday_prohibition}, "
+            f"Turnaround hours: {self.mandatory_turnaround_hours}, "
+            f"Max moves/day: {self.max_company_moves_per_day}")
         
         if structured_processed > 0 or fallback_processed > 0:
             print(f"DEBUG: Director constraint processing - {structured_processed} structured (direct mapping), "
@@ -1301,8 +1441,78 @@ class LocationFirstGA:
         if location_constraints_processed > 0:
             print(f"DEBUG: Location constraints processed: {location_constraints_processed}")
         
-        if equipment_constraints_processed > 0:  # NEW
+        if equipment_constraints_processed > 0:
             print(f"DEBUG: Equipment constraints processed: {equipment_constraints_processed}")
+        
+        if production_constraints_processed > 0:  # NEW
+            print(f"DEBUG: Production constraints processed: {production_constraints_processed}")
+
+    def _map_production_constraint(self, constraint):
+        """Map production rule constraint to GA storage - NEW METHOD"""
+        try:
+            production_restriction = constraint.production_restriction
+            if not production_restriction:
+                print(f"DEBUG: No production_restriction found in constraint: {constraint.description}")
+                return
+            
+            rule_type = production_restriction.get('rule_type')
+            constraint_level = production_restriction.get('constraint_level', 'Hard')
+            parsed_data = production_restriction.get('parsed_data', {})
+            
+            if not rule_type:
+                print(f"DEBUG: No rule_type found in production constraint: {constraint.description}")
+                return
+            
+            print(f"DEBUG: Processing production rule '{rule_type}' with level '{constraint_level}'")
+            
+            # Store in production rules registry
+            self.production_rules[rule_type] = {
+                'constraint': constraint,
+                'constraint_level': constraint_level,
+                'parsed_data': parsed_data
+            }
+            
+            # Map to specific GA attributes for fast lookup
+            if rule_type == 'sunday_prohibition':
+                self.sunday_prohibition = True
+                prohibited_days = parsed_data.get('prohibited_days', ['Sunday'])
+                print(f"DEBUG: Sunday work prohibition enabled - prohibited days: {prohibited_days}")
+            
+            elif rule_type == 'mandatory_turnaround':
+                self.mandatory_turnaround_hours = parsed_data.get('rest_period_hours', 12)
+                print(f"DEBUG: Mandatory turnaround: {self.mandatory_turnaround_hours} hours")
+            
+            elif rule_type == 'company_moves':
+                self.max_company_moves_per_day = parsed_data.get('max_moves_per_day', 1)
+                print(f"DEBUG: Max company moves per day: {self.max_company_moves_per_day}")
+            
+            elif rule_type == 'minor_work_hours':
+                self.minor_max_work_hours = parsed_data.get('max_work_hours', 9.5)
+                includes_breaks = parsed_data.get('includes_breaks_schooling', True)
+                print(f"DEBUG: Minor max work hours: {self.minor_max_work_hours} (includes breaks: {includes_breaks})")
+            
+            elif rule_type == 'overtime_policy':
+                self.overtime_threshold_hours = parsed_data.get('standard_hours_threshold', 10.0)
+                requires_approval = parsed_data.get('requires_approval', True)
+                print(f"DEBUG: Overtime threshold: {self.overtime_threshold_hours} hours (requires approval: {requires_approval})")
+            
+            elif rule_type == 'weather_contingency':
+                self.weather_contingency_requirements = parsed_data
+                cover_days = parsed_data.get('cover_set_days_required', 2)
+                interior_ratio = parsed_data.get('interior_backup_ratio', 0.2)
+                print(f"DEBUG: Weather contingency - {cover_days} cover days, {interior_ratio:.1%} interior ratio required")
+            
+            elif rule_type == 'general_production':
+                # Store general production rules without specific mapping
+                print(f"DEBUG: General production rule stored: {constraint.description}")
+            
+            else:
+                print(f"DEBUG: Unknown production rule type '{rule_type}' - storing in registry only")
+        
+        except Exception as e:
+            print(f"ERROR: Production constraint mapping failed for '{constraint.description}': {e}")
+            import traceback
+            traceback.print_exc()
     
     def _build_travel_times(self):
         """Build travel time matrix between locations"""
@@ -1603,8 +1813,9 @@ class LocationFirstGA:
                     # Check if prep time is available
                     if first_usage_day is not None and first_usage_day < prep_days:
                         violations += 1
-                        print(f"DEBUG: Prep violation - '{equipment_name}' needs {prep_days} prep days, first use on day {first_usage_day}")
-        
+                        #print(f"DEBUG: Prep violation - '{equipment_name}' needs {prep_days} prep days, first use on day {first_usage_day}")
+                        #equipment constraint debugging stopped by tushar on 23 august    
+
         except Exception as e:
             print(f"ERROR: Equipment prep check failed: {e}")
         
@@ -1898,7 +2109,7 @@ class LocationFirstGA:
     
     
     def fitness(self, individual: Dict) -> float:
-        """Calculate fitness using graduated penalty system - ENHANCED with location constraints"""
+        """Calculate fitness using graduated penalty system - ENHANCED with production rules"""
         score = 0.0
         
         sequence = individual['sequence']
@@ -1915,15 +2126,18 @@ class LocationFirstGA:
         director_violations = self._count_director_violations(sequence, day_assignments)
         score += PENALTY_DIRECTOR_MANDATE * director_violations
         
-        # NEW: Location constraint penalties
         location_violations = self._check_complete_location_violations(sequence, day_assignments)
         location_penalty = PENALTY_HARD_CONSTRAINT * location_violations
         score += location_penalty
         
-        # NEW: Equipment constraint penalties
         equipment_violations = self._check_complete_equipment_violations(sequence, day_assignments)
         equipment_penalty = PENALTY_HARD_CONSTRAINT * equipment_violations
         score += equipment_penalty
+
+        # NEW: Production rule constraint penalties
+        production_violations = self._check_complete_production_violations(sequence, day_assignments)
+        production_penalty = PENALTY_HARD_CONSTRAINT * production_violations
+        score += production_penalty
 
         # Existing soft penalties
         travel_penalty = self._calculate_travel_penalty(sequence)
@@ -2378,6 +2592,268 @@ class LocationFirstGA:
                 'source': 'fallback'
             })
 
+    def _check_complete_production_violations(self, sequence: List[int], day_assignments: List[int]) -> int:
+        """Check ALL production rule violations - NEW METHOD"""
+        violations = 0
+        
+        try:
+            # Check Sunday work prohibition
+            violations += self._check_sunday_prohibition_violations(sequence, day_assignments)
+            
+            # Check mandatory turnaround violations
+            violations += self._check_turnaround_violations(sequence, day_assignments)
+            
+            # Check company move violations
+            violations += self._check_company_move_violations(sequence, day_assignments)
+            
+            # Check minor work hour violations
+            violations += self._check_minor_work_hour_violations(sequence, day_assignments)
+            
+            # Check overtime policy violations
+            violations += self._check_overtime_policy_violations(sequence, day_assignments)
+            
+            # Check weather contingency violations (soft)
+            violations += self._check_weather_contingency_violations(sequence, day_assignments)
+        
+        except Exception as e:
+            print(f"ERROR: Production violations check failed: {e}")
+            return 0
+        
+        return violations
+
+    def _check_sunday_prohibition_violations(self, sequence: List[int], day_assignments: List[int]) -> int:
+        """Check Sunday work prohibition violations"""
+        if not self.sunday_prohibition:
+            return 0
+        
+        violations = 0
+        
+        try:
+            for i, cluster_idx in enumerate(sequence):
+                if cluster_idx >= len(self.cluster_manager.clusters):
+                    continue
+                
+                cluster = self.cluster_manager.clusters[cluster_idx]
+                start_day = day_assignments[i]
+                
+                # Check each day this cluster needs
+                for day_offset in range(cluster.estimated_days):
+                    shooting_day_idx = start_day + day_offset
+                    if shooting_day_idx >= len(self.calendar.shooting_days):
+                        continue
+                    
+                    shooting_date = self.calendar.shooting_days[shooting_day_idx]
+                    day_name = shooting_date.strftime("%A")
+                    
+                    if day_name == "Sunday":
+                        violations += 1
+                        print(f"DEBUG: Sunday violation - cluster {cluster_idx} scheduled on {shooting_date}")
+        
+        except Exception as e:
+            print(f"ERROR: Sunday prohibition check failed: {e}")
+        
+        return violations
+
+    def _check_turnaround_violations(self, sequence: List[int], day_assignments: List[int]) -> int:
+        """Check mandatory turnaround violations"""
+        if self.mandatory_turnaround_hours <= 0:
+            return 0
+        
+        violations = 0
+        
+        try:
+            # Build day-to-day shooting schedule
+            shooting_schedule = {}
+            for i, cluster_idx in enumerate(sequence):
+                if cluster_idx >= len(self.cluster_manager.clusters):
+                    continue
+                
+                cluster = self.cluster_manager.clusters[cluster_idx]
+                start_day = day_assignments[i]
+                
+                for day_offset in range(cluster.estimated_days):
+                    day_idx = start_day + day_offset
+                    if day_idx < len(self.calendar.shooting_days):
+                        if day_idx not in shooting_schedule:
+                            shooting_schedule[day_idx] = []
+                        shooting_schedule[day_idx].append(cluster)
+            
+            # Check turnaround between consecutive shooting days
+            sorted_days = sorted(shooting_schedule.keys())
+            for i in range(len(sorted_days) - 1):
+                current_day = sorted_days[i]
+                next_day = sorted_days[i + 1]
+                
+                # If days are consecutive (next_day = current_day + 1)
+                if next_day == current_day + 1:
+                    current_date = self.calendar.shooting_days[current_day]
+                    next_date = self.calendar.shooting_days[next_day]
+                    
+                    # Assume wrap at 10 PM, call at 6 AM (16 hours apart normally)
+                    # If less than mandatory turnaround, it's a violation
+                    # Simplified: if consecutive days, assume 8h gap (22:00 to 06:00)
+                    standard_gap_hours = 8
+                    if standard_gap_hours < self.mandatory_turnaround_hours:
+                        violations += 1
+                        print(f"DEBUG: Turnaround violation - {current_date} to {next_date} ({standard_gap_hours}h < {self.mandatory_turnaround_hours}h)")
+        
+        except Exception as e:
+            print(f"ERROR: Turnaround check failed: {e}")
+        
+        return violations
+
+    def _check_company_move_violations(self, sequence: List[int], day_assignments: List[int]) -> int:
+        """Check company move violations (soft constraint)"""
+        violations = 0
+        
+        try:
+            # Count location changes per day
+            daily_locations = {}
+            
+            for i, cluster_idx in enumerate(sequence):
+                if cluster_idx >= len(self.cluster_manager.clusters):
+                    continue
+                
+                cluster = self.cluster_manager.clusters[cluster_idx]
+                start_day = day_assignments[i]
+                
+                for day_offset in range(cluster.estimated_days):
+                    day_idx = start_day + day_offset
+                    if day_idx < len(self.calendar.shooting_days):
+                        if day_idx not in daily_locations:
+                            daily_locations[day_idx] = set()
+                        daily_locations[day_idx].add(cluster.location)
+            
+            # Check for multiple locations per day
+            for day_idx, locations in daily_locations.items():
+                if len(locations) > self.max_company_moves_per_day:
+                    # Each additional location beyond the limit is a violation
+                    excess_moves = len(locations) - self.max_company_moves_per_day
+                    violations += excess_moves
+                    print(f"DEBUG: Company move violation - Day {day_idx}: {len(locations)} locations (limit: {self.max_company_moves_per_day})")
+        
+        except Exception as e:
+            print(f"ERROR: Company move check failed: {e}")
+        
+        return violations
+
+    def _check_minor_work_hour_violations(self, sequence: List[int], day_assignments: List[int]) -> int:
+        """Check minor work hour violations"""
+        violations = 0
+        
+        try:
+            # Identify minor actors (this is simplified - in practice would come from cast data)
+            minor_indicators = ['child', 'kid', 'minor', 'teen', 'young']
+            
+            # Build daily schedule with hours
+            daily_schedules = {}
+            for i, cluster_idx in enumerate(sequence):
+                if cluster_idx >= len(self.cluster_manager.clusters):
+                    continue
+                
+                cluster = self.cluster_manager.clusters[cluster_idx]
+                start_day = day_assignments[i]
+                
+                for day_offset in range(cluster.estimated_days):
+                    day_idx = start_day + day_offset
+                    if day_idx < len(self.calendar.shooting_days):
+                        if day_idx not in daily_schedules:
+                            daily_schedules[day_idx] = {'hours': 0, 'has_minors': False, 'actors': set()}
+                        
+                        daily_schedules[day_idx]['hours'] += cluster.total_hours / cluster.estimated_days
+                        daily_schedules[day_idx]['actors'].update(cluster.required_actors)
+                        
+                        # Check for minors (simplified heuristic)
+                        for actor in cluster.required_actors:
+                            if any(indicator in actor.lower() for indicator in minor_indicators):
+                                daily_schedules[day_idx]['has_minors'] = True
+            
+            # Check minor hour violations
+            for day_idx, schedule in daily_schedules.items():
+                if schedule['has_minors'] and schedule['hours'] > self.minor_max_work_hours:
+                    violations += 1
+                    print(f"DEBUG: Minor work hour violation - Day {day_idx}: {schedule['hours']:.1f}h > {self.minor_max_work_hours}h")
+        
+        except Exception as e:
+            print(f"ERROR: Minor work hour check failed: {e}")
+        
+        return violations
+
+    def _check_overtime_policy_violations(self, sequence: List[int], day_assignments: List[int]) -> int:
+        """Check overtime policy violations (soft constraint)"""
+        violations = 0
+        
+        try:
+            # Build daily hour totals
+            daily_hours = {}
+            for i, cluster_idx in enumerate(sequence):
+                if cluster_idx >= len(self.cluster_manager.clusters):
+                    continue
+                
+                cluster = self.cluster_manager.clusters[cluster_idx]
+                start_day = day_assignments[i]
+                
+                for day_offset in range(cluster.estimated_days):
+                    day_idx = start_day + day_offset
+                    if day_idx < len(self.calendar.shooting_days):
+                        if day_idx not in daily_hours:
+                            daily_hours[day_idx] = 0
+                        daily_hours[day_idx] += cluster.total_hours / cluster.estimated_days
+            
+            # Check for overtime violations
+            for day_idx, hours in daily_hours.items():
+                if hours > self.overtime_threshold_hours:
+                    # Soft violation - penalize excessive overtime
+                    overtime_hours = hours - self.overtime_threshold_hours
+                    violations += int(overtime_hours)  # 1 violation per overtime hour
+                    print(f"DEBUG: Overtime violation - Day {day_idx}: {hours:.1f}h > {self.overtime_threshold_hours}h threshold")
+        
+        except Exception as e:
+            print(f"ERROR: Overtime policy check failed: {e}")
+        
+        return violations
+
+    def _check_weather_contingency_violations(self, sequence: List[int], day_assignments: List[int]) -> int:
+        """Check weather contingency violations (soft constraint)"""
+        violations = 0
+        
+        try:
+            if not self.weather_contingency_requirements:
+                return 0
+            
+            # Count interior vs exterior scenes
+            interior_count = 0
+            exterior_count = 0
+            
+            for i, cluster_idx in enumerate(sequence):
+                if cluster_idx >= len(self.cluster_manager.clusters):
+                    continue
+                
+                cluster = self.cluster_manager.clusters[cluster_idx]
+                
+                for scene in cluster.scenes:
+                    int_ext = scene.get('INT_EXT', '').upper()
+                    if int_ext == 'INT':
+                        interior_count += 1
+                    elif int_ext == 'EXT':
+                        exterior_count += 1
+            
+            # Check interior backup ratio
+            total_scenes = interior_count + exterior_count
+            if total_scenes > 0:
+                interior_ratio = interior_count / total_scenes
+                required_ratio = self.weather_contingency_requirements.get('interior_backup_ratio', 0.2)
+                
+                if interior_ratio < required_ratio:
+                    # Soft violation - insufficient cover sets
+                    violations += 1
+                    print(f"DEBUG: Weather contingency violation - Interior ratio {interior_ratio:.2f} < {required_ratio:.2f} required")
+        
+        except Exception as e:
+            print(f"ERROR: Weather contingency check failed: {e}")
+        
+        return violations
+
     def _check_complete_director_violations(self, sequence: List[int], day_assignments: List[int]) -> int:
         """Check ALL director mandate violations - Phase B Implementation"""
         violations = 0
@@ -2817,8 +3293,9 @@ class LocationFirstGA:
             for scene_num in required_scenes:
                 scene_str = str(scene_num).strip()
                 all_required_scenes.add(scene_str)
-                print(f"DEBUG: Scene {scene_str} requires equipment '{equipment_name}'")
-            
+                #print(f"DEBUG: Scene {scene_str} requires equipment '{equipment_name}'")
+                #equipment constraint debugging stopped by tushar on 23 August
+
             # NEW: Resolve character dependencies to scenes
             character_deps = requirements.get('character_dependencies', [])
             for character in character_deps:
@@ -2893,7 +3370,8 @@ class LocationFirstGA:
                     
                     # DEBUG: Show synopsis content for first few scenes
                     if debug_count < 5:
-                        print(f"DEBUG: Scene {scene_number} Synopsis: '{synopsis}' Location: '{location_name}'")
+                        #print(f"DEBUG: Scene {scene_number} Synopsis: '{synopsis}' Location: '{location_name}'")
+                        #equipment constraint debugging stopped by tushar on 23 august
                         debug_count += 1
                     
                     # Special debug for train-related scenes
